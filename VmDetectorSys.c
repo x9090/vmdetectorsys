@@ -227,6 +227,7 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	PFILE_OBJECT		DR0_FileObject;
 	PDEVICE_OBJECT		DR0_DeviceObject;
 	UNICODE_STRING		DR0_DeviceName; 
+	WCHAR				wDriverName[MAX_PATH*2];
 	WCHAR				*wDr0DevName=L"\\Device\\Harddisk0\\DR0";
 
 	// Get the lowest device object (ATAPI) from DR0 devstack
@@ -242,6 +243,8 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	pVendorId = (PCHAR)pDevObj->DeviceExtension;
 
 	// TODO: Determine disk driver type: \Driver\atapi OR \Driver\vmscsi
+	wDriverName = DR0_DeviceObject->DriverObject->DriverName;
+
 	// ATAPI: atapi!DevObject->DeviceExtension + 0xD1
 	// SCSI: scsi!DevObject->DeviceExtension + 0x126
 	pVendorId = (PCHAR)pVendorId+0xD1;
