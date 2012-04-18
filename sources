@@ -1,0 +1,5 @@
+TARGETNAME=VmDetectorSys
+TARGETTYPE=DRIVER
+
+SOURCES=stdafx.c \
+	VmDetectorSys.c

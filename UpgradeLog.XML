@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet type='text/xsl' href='_UpgradeReport_Files/UpgradeReport.xslt'?><UpgradeLog>
+<Properties><Property Name="Solution" Value="VmDetectorSys">
+</Property><Property Name="Solution File" Value="C:\DDATA\ProjectDDK\VmDetectorSys\VmDetectorSys.sln">
+</Property><Property Name="Date" Value="Wednesday, April 18, 2012">
+</Property><Property Name="Time" Value="0:38 AM">
+</Property></Properties><Event ErrorLevel="0" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Converting project file 'C:\ddata\ProjectDDK\VmDetectorSys\VmDetectorSys.vcproj'.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="VCConvertEngine could not convert attribute CompileAsManaged =  under Tool VCNMakeTool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="VCConvertEngine could not convert attribute CompileAsManaged =  under Tool VCNMakeTool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="VCConvertEngine could not convert attribute CompileAsManaged =  under Tool VCNMakeTool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="VCConvertEngine could not convert attribute CompileAsManaged =  under Tool VCNMakeTool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\VmDetectorSys.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\VmDetectorSys.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\VmDetectorSys.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\VmDetectorSys.c' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.h' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.h' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.h' default tool.">
+</Event><Event ErrorLevel="1" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Unable to upgrade the file '.\stdafx.h' default tool.">
+</Event><Event ErrorLevel="0" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Done converting to new project file 'C:\ddata\ProjectDDK\VmDetectorSys\VmDetectorSys.vcxproj'.">
+</Event><Event ErrorLevel="3" Project="VmDetectorSys" Source="VmDetectorSys.vcproj" Description="Converted">
+</Event><Event ErrorLevel="0" Project="" Source="VmDetectorSys.sln" Description="Solution converted successfully">
+</Event><Event ErrorLevel="3" Project="" Source="VmDetectorSys.sln" Description="Converted">
+</Event></UpgradeLog>

@@ -1,0 +1,7 @@
+BUILD: Computing Include file dependencies:
+BUILD: Examining d:\projectddk\vmdetectorsys directory for files to compile.
+oacr invalidate root:x86chk /autocleanqueue
+1>Compiling and Linking d:\projectddk\vmdetectorsys *************
+1>'nmake.exe /nologo BUILDMSG=Stop. -i /nologo /f c:\winddk\7600.16385.0\bin\makefile.def BUILD_PASS=PASS2 LINKONLY=1 NOPASS0=1 MAKEDIR_RELATIVE_TO_BASEDIR='
+1> C:\winddk\7600.16385.0\Bin\x86\oacr\oacrcl @d:\projectddk\vmdetectorsys\objchk_win7_x86\i386\cl.rsp
+1> C:\winddk\7600.16385.0\Bin\x86\oacr\oacrlink /out:d:\projectddk\vmdetectorsys\objchk_win7_x86\i386\VmDetectorSys.sys /machine:ix86 @d:\projectddk\vmdetectorsys\objchk_win7_x86\i386\lnk.rsp
