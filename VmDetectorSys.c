@@ -1,5 +1,6 @@
 #include "stdafx.h"
 
+#define MAX_PATH 256
 /*
 	VmDetectorSys - Main file
 	This file contains a very simple implementation of a WDM driver. Note that it does not support all
@@ -227,8 +228,10 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	PFILE_OBJECT		DR0_FileObject;
 	PDEVICE_OBJECT		DR0_DeviceObject;
 	UNICODE_STRING		DR0_DeviceName; 
-	WCHAR				wDriverName[MAX_PATH*2];
+	UNICODE_STRING		FltDrvName;
+	WCHAR				wFltDriverName[MAX_PATH*2] = {0};
 	WCHAR				*wDr0DevName=L"\\Device\\Harddisk0\\DR0";
+
 
 	// Get the lowest device object (ATAPI) from DR0 devstack
 	RtlInitUnicodeString(&DR0_DeviceName, wDr0DevName);
@@ -237,17 +240,24 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	IoGetDeviceObjectPointer(&DR0_DeviceName, FILE_READ_ATTRIBUTES, &DR0_FileObject, &DR0_DeviceObject);
 	DR0_DeviceObject = DR0_FileObject->DeviceObject;
 
-	// Get ATAPI device object
+	// Get lowest device object (ATAPI/SCSI)
 	pDevObj = IoGetDeviceAttachmentBaseRef(DR0_FileObject->DeviceObject);
 
 	pVendorId = (PCHAR)pDevObj->DeviceExtension;
 
 	// TODO: Determine disk driver type: \Driver\atapi OR \Driver\vmscsi
-	wDriverName = DR0_DeviceObject->DriverObject->DriverName;
+	FltDrvName = pDevObj->DriverObject->DriverName;
+
+	memcpy(wFltDriverName, FltDrvName.Buffer, FltDrvName.Length);
+
+	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Filter driver name %ws\n", wFltDriverName));
 
 	// ATAPI: atapi!DevObject->DeviceExtension + 0xD1
-	// SCSI: scsi!DevObject->DeviceExtension + 0x126
-	pVendorId = (PCHAR)pVendorId+0xD1;
+	// SCSI: vmscsi!DevObject->DeviceExtension + 0x126
+	if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\atapi") == 0)
+		pVendorId = (PCHAR)pVendorId+0xD1;
+	else if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\vmscsi") == 0)
+		pVendorId = (PCHAR)pVendorId+0x126;
 
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Lowest device object of DR0 0x%08X\n", pDevObj));
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Device Model: %s\n", pVendorId));
@@ -255,6 +265,11 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	if(strcmp(pVendorId, "VMware Virtual IDE Hard Drive") == 0)
 	{
 		strncpy(pVendorId, "VMw@re Virtu@l IDE H@rd Driv3", 29);
+		return TRUE;
+	}
+	else if(strstr(pVendorId, "VMware, VMware Virtual") != NULL)
+	{
+		strncpy(pVendorId, "VMw@re, VMw@re Virtu@l", 22);
 		return TRUE;
 	}
 
