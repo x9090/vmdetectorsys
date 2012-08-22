@@ -1,5 +1,9 @@
 TARGETNAME=VmDetectorSys
 TARGETTYPE=DRIVER
 
-SOURCES=stdafx.c \
-	VmDetectorSys.c
+SOURCES=VmDetectorSys.c \
+	RDTSCEmu.cpp \
+	distorm_dummy.c \
+	HookInt.cpp \
+        
+INCLUDES=.\distorm\src;

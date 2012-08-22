@@ -117,15 +117,34 @@ build</NMakeReBuildCommandLine>
     <NMakeForcedIncludes Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(NMakeForcedIncludes)</NMakeForcedIncludes>
     <NMakeAssemblySearchPath Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(NMakeAssemblySearchPath)</NMakeAssemblySearchPath>
     <NMakeForcedUsingAssemblies Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(NMakeForcedUsingAssemblies)</NMakeForcedUsingAssemblies>
+    <LibraryPath Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="stdafx.c" />
+    <ClCompile Include="distorm\src\decoder.c" />
+    <ClCompile Include="distorm\src\distorm.c" />
+    <ClCompile Include="distorm\src\dummy.c" />
+    <ClCompile Include="distorm\src\instructions.c" />
+    <ClCompile Include="distorm\src\insts.c" />
+    <ClCompile Include="distorm\src\operands.c" />
+    <ClCompile Include="distorm\src\prefix.c" />
+    <ClCompile Include="distorm\src\pydistorm.c" />
+    <ClCompile Include="distorm\src\textdefs.c" />
+    <ClCompile Include="distorm\src\wstring.c" />
+    <ClCompile Include="distorm\src\x86defs.c" />
+    <ClCompile Include="distorm_dummy.c" />
+    <ClCompile Include="HookInt.cpp" />
+    <ClCompile Include="RDTSCEmu.cpp" />
     <ClCompile Include="VmDetectorSys.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="distorm\config.h" />
+    <ClInclude Include="distorm\distorm.h" />
+    <ClInclude Include="HookInt.h" />
+    <ClInclude Include="RDTSCEmu.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="VmDetectorSys.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="$(ProjectDir)\sources" />

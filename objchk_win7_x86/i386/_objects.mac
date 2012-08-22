@@ -1,17 +1,19 @@
 
 
 386_OBJECTS=\
- $(OBJ_PATH)\$O\stdafx.obj \
  $(OBJ_PATH)\$O\vmdetectorsys.obj \
+ $(OBJ_PATH)\$O\distorm_dummy.obj \
+ $(OBJ_PATH)\$O\rdtscemu.obj \
+ $(OBJ_PATH)\$O\hookint.obj \
 
 
 
 
 
 # lowercased
-BASEDIR=c:\winddk\7600.16385.0
-OBJECT_ROOT=c:\winddk\7600.16385.0
-MAKEDIR_LOWERCASE=d:\projectddk\vmdetectorsys
-OBJ_PATH=d:\projectddk\vmdetectorsys
+BASEDIR=c:\winddk\7600.16385.1
+OBJECT_ROOT=c:\winddk\7600.16385.1
+MAKEDIR_LOWERCASE=c:\ddata\projectddk\vmdetectorsys
+OBJ_PATH=c:\ddata\projectddk\vmdetectorsys
 CONCURRENT_MIDL=0
 CONCURRENT_MANIFEST_BUILD=0

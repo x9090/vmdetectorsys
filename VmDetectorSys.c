@@ -1,4 +1,6 @@
-#include "stdafx.h"
+#include "VmDetectorSys.h"
+
+#define MAX_PATH 256
 
 /*
 	VmDetectorSys - Main file
@@ -204,6 +206,63 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 			*pBuf = bResult;
 		break;
 
+	// Initialize hook to RDTSC interrupt handler
+	case IOCTL_VMDETECTORSYS_RTDSC_HOOK:
+		__asm{
+			int 3
+		}
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_RTDSC_HOOK control code executed\n"));
+		bResult = RDTSEMU_initializeHooks(g_ullRdtscValue, g_ulRdtscValue, g_bRtdscMethodIncreasing);
+		if (bResult && dwOutputBufferLength == sizeof(dwOutputBufferLength))
+			*pBuf = bResult;
+		break;
+
+	// Set constant value to RDTSC
+	case IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST:
+
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST control code executed\n"));
+
+		__asm{
+			int 3
+		}
+		if (pIoCurrentStack->Parameters.DeviceIoControl.InputBufferLength == sizeof(ULONG))
+		{
+			g_bRtdscMethodIncreasing = FALSE;
+			g_ulRdtscValue = *(ULONG*)Irp->AssociatedIrp.SystemBuffer;
+		}
+		else 
+			status = STATUS_INVALID_PARAMETER;
+		break;
+
+	// Set delta value to RDTSC
+	case IOCTL_RDTSCEMU_METHOD_INCREASING:
+
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_RDTSCEMU_METHOD_INCREASING control code executed\n"));
+
+		if (pIoCurrentStack->Parameters.DeviceIoControl.InputBufferLength == sizeof(ULONG))
+		{
+			__asm
+			{
+				push	eax
+				push	ecx
+				push	edx
+				rdtsc
+				lea		ecx, g_ullRdtscValue
+				mov		dword ptr [ecx], eax
+				mov		dword ptr [ecx+4], edx
+				pop		edx
+				pop		ecx
+				pop		eax
+			}
+			// set delta
+			g_ulRdtscValue = *(PULONG)(Irp->AssociatedIrp.SystemBuffer);
+			g_bRtdscMethodIncreasing = TRUE;
+			Irp->IoStatus.Status = STATUS_SUCCESS;
+		}
+		else 
+			status = STATUS_INVALID_PARAMETER;
+		break;
+
 	default:
 		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => Invalid control code\n"));
 		status = STATUS_INVALID_PARAMETER;
@@ -227,8 +286,10 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	PFILE_OBJECT		DR0_FileObject;
 	PDEVICE_OBJECT		DR0_DeviceObject;
 	UNICODE_STRING		DR0_DeviceName; 
-	WCHAR				wDriverName[MAX_PATH*2];
+	UNICODE_STRING		FltDrvName;
+	WCHAR				wFltDriverName[MAX_PATH*2] = {0};
 	WCHAR				*wDr0DevName=L"\\Device\\Harddisk0\\DR0";
+
 
 	// Get the lowest device object (ATAPI) from DR0 devstack
 	RtlInitUnicodeString(&DR0_DeviceName, wDr0DevName);
@@ -237,24 +298,40 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	IoGetDeviceObjectPointer(&DR0_DeviceName, FILE_READ_ATTRIBUTES, &DR0_FileObject, &DR0_DeviceObject);
 	DR0_DeviceObject = DR0_FileObject->DeviceObject;
 
-	// Get ATAPI device object
+	// Get lowest device object (ATAPI/SCSI)
 	pDevObj = IoGetDeviceAttachmentBaseRef(DR0_FileObject->DeviceObject);
 
 	pVendorId = (PCHAR)pDevObj->DeviceExtension;
 
-	// TODO: Determine disk driver type: \Driver\atapi OR \Driver\vmscsi
-	wDriverName = DR0_DeviceObject->DriverObject->DriverName;
+	FltDrvName = pDevObj->DriverObject->DriverName;
 
+	memcpy(wFltDriverName, FltDrvName.Buffer, FltDrvName.Length);
+
+	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Filter driver name %ws\n", wFltDriverName));
+
+	
 	// ATAPI: atapi!DevObject->DeviceExtension + 0xD1
-	// SCSI: scsi!DevObject->DeviceExtension + 0x126
-	pVendorId = (PCHAR)pVendorId+0xD1;
+	// SCSI: vmscsi!DevObject->DeviceExtension + 0x126
+	if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\atapi") == 0)
+		pVendorId = (PCHAR)pVendorId+0xD1;
+	else if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\vmscsi") == 0)
+		pVendorId = (PCHAR)pVendorId+0x126;
 
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Lowest device object of DR0 0x%08X\n", pDevObj));
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Device Model: %s\n", pVendorId));
 
 	if(strcmp(pVendorId, "VMware Virtual IDE Hard Drive") == 0)
 	{
-		strncpy(pVendorId, "VMw@re Virtu@l IDE H@rd Driv3", 29);
+		memcpy(pVendorId, "VMw@re Virtu@l IDE H@rd Driv3\0__________\012345678\001234567890123456789012345678901234678", 89);
+		ObDereferenceObject(pDevObj);
+		ObDereferenceObject(DR0_FileObject);
+		return TRUE;
+	}
+	else if(strstr(pVendorId, "VMware, VMware Virtual") != NULL)
+	{
+		strncpy(pVendorId, "VMw@re, VMw@re Virtu@l", 22);
+		ObDereferenceObject(pDevObj);
+		ObDereferenceObject(DR0_FileObject);
 		return TRUE;
 	}
 
@@ -271,7 +348,7 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	OBJECT_ATTRIBUTES	oaValueName;
 	UNICODE_STRING		usRegistryKey;
 	UNICODE_STRING		usValueName;
-	WCHAR		*wStrNewData = L"IDE\\DiskVMw@re_Virtu@l_ID3_H@rd_Driv3___________00000001\\3030303030303030303030303030303030303130";
+	WCHAR		*wStrNewData = L"IDE\\DiskVMw@re_Virtu@l_ID3_H@rd_Driv3___________0123456789\\0123456789012345678901234567890123456789";
 	NTSTATUS	status;
 	HANDLE		hKey;
 	ULONG		ulSize;
