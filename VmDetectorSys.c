@@ -2,6 +2,7 @@
 
 #define MAX_PATH 256
 
+#define MAX_PATH 256
 /*
 	VmDetectorSys - Main file
 	This file contains a very simple implementation of a WDM driver. Note that it does not support all
@@ -303,9 +304,18 @@ BOOLEAN VmDetectorPatchStorageProperty()
 
 	pVendorId = (PCHAR)pDevObj->DeviceExtension;
 
+<<<<<<< HEAD
 	FltDrvName = pDevObj->DriverObject->DriverName;
 
 	memcpy(wFltDriverName, FltDrvName.Buffer, FltDrvName.Length);
+=======
+	// TODO: Determine disk driver type: \Driver\atapi OR \Driver\vmscsi
+	FltDrvName = pDevObj->DriverObject->DriverName;
+
+	memcpy(wFltDriverName, FltDrvName.Buffer, FltDrvName.Length);
+
+	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Filter driver name %ws\n", wFltDriverName));
+>>>>>>> 0798c8e1d7b0b869a3b814f5123561ac3ce6bea1
 
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Filter driver name %ws\n", wFltDriverName));
 
@@ -332,6 +342,11 @@ BOOLEAN VmDetectorPatchStorageProperty()
 		strncpy(pVendorId, "VMw@re, VMw@re Virtu@l", 22);
 		ObDereferenceObject(pDevObj);
 		ObDereferenceObject(DR0_FileObject);
+		return TRUE;
+	}
+	else if(strstr(pVendorId, "VMware, VMware Virtual") != NULL)
+	{
+		strncpy(pVendorId, "VMw@re, VMw@re Virtu@l", 22);
 		return TRUE;
 	}
 
