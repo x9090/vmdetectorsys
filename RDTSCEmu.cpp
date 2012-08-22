@@ -205,9 +205,6 @@ extern "C" {
 #endif
 BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOOLEAN bRtdscMethodIncreasing)
 {
-	__asm{
-		int 3
-	}
 	
 	// Make sure either IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST or IOCTL_RDTSCEMU_METHOD_INCREASING ctlcode has been sent 
 	if (ullRtdscValue > 0 || ulRtdscValue > 0)
