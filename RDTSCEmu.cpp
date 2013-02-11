@@ -25,11 +25,12 @@ extern "C" {
 }; // extern "C"
 #endif
 
+#include "VmDetectorSys.h"
 #include "RDTSCEmu.h"
 #include "distorm\distorm.h"
 #include "HookInt.h"
 
-#pragma comment(lib, "distorm\distorm.lib")
+#pragma comment(lib, "distorm\\distorm.lib")
 
 #ifdef __cplusplus
 namespace { // anonymous namespace to limit the scope of this global variable!
@@ -66,6 +67,7 @@ namespace { // anonymous namespace to limit the scope of this global variable!
 #define MAX_CPUS		(32)
 #define MAX_INSTR		(15)
 
+#define _MAX_PATH		1024
 // valid for all exceptions with an associated error code (see Intel manuals Vol.3A, 5.13)
 typedef struct
 {
@@ -114,8 +116,6 @@ ULONG isRDTSC(PVOID address)
 		_DecodeResult res = distorm_decode(0, (const unsigned char*)address, MAX_INSTR, Decode32Bits, instructions, MAX_INSTR, &instructionCount);
 		if (res)
 		{
-			KdPrint(("[DBG] isRDTSC => Instruction: %s\n", instructions->mnemonic.p));
-			KdPrint(("[DBG] isRDTSC => Instruction size: %d\n", instructions->size));
 			return strcmp((const char*)instructions->mnemonic.p, "RDTSC") ? 0 : instructions->size;
 		}
 	}
@@ -129,10 +129,57 @@ ULONG isRDTSC(PVOID address)
 // return false if original handler should be executed, true otherwise
 BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 {
+	
+	PUNICODE_STRING pImageName = GetProcessNameByPid(PsGetCurrentProcessId());
+	ANSI_STRING asImageName; 
+	int index;
+
+	// Always initialize g_tempexclusionfilelist. When there is another thread executing this function,
+	// the previous thread hasn't finished executing yet.
+	// This caused g_tempexclusionfilelist always in an invalid pointer location
+	g_tempexclusionfilelist = g_pExclusionList;
+
 	if (MmIsAddressValid((PVOID)stackLayout->origHandlerStack.eip))
 	{
 		if (ULONG length = isRDTSC((PVOID)stackLayout->origHandlerStack.eip))
 		{
+			// Process the exclusion first
+			if (g_countfilename > 0)
+			{
+				RtlUnicodeStringToAnsiString(&asImageName, pImageName, TRUE);
+				for (index=0; index < g_countfilename;  index++)
+				{
+					__try{
+						if (strstr(_strlwr(asImageName.Buffer), _strlwr(*g_tempexclusionfilelist)) != NULL)
+						{
+							KdPrint(("[DBG] Excluded %wZ\n", pImageName));
+							// Free ANSI string allocated by kernel
+							RtlFreeAnsiString(&asImageName);
+							// Free allocated pool memory by kernel
+							ExFreePoolWithTag(pImageName, 'vmde');
+							// We do not tamper the original value of EAX and EDX
+							stackLayout->origHandlerStack.eip += length;
+							return true;
+						}
+						g_tempexclusionfilelist++;
+					}
+					__except(EXCEPTION_EXECUTE_HANDLER){
+						KdPrint(("[DBG] Exclusion file list address: 0x%08x\n", g_pExclusionList));
+						KdPrint(("[DBG] Current pointer to file list address: 0x%08x\n", g_tempexclusionfilelist));
+						KdPrint(("[DBG] asImageName.Buffer address: 0x%08x\n", asImageName.Buffer));
+						break;
+					}
+				}
+				// Free ANSI string allocated by kernel
+				RtlFreeAnsiString(&asImageName);
+			}
+
+			DbgPrint("[hookImplementation] PID: %d (%wZ) called interrupt handler\n", PsGetCurrentProcessId(), pImageName);
+
+			// Free allocated pool memory by kernel
+			ExFreePoolWithTag(pImageName, 'vmde');
+			
+			// None excluded name will be processed here
 			if (g_RTDSCEmuMethodIncreasing)
 			{
 				static ULONG seed = 0x666;
@@ -147,6 +194,7 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 			// #GP is a fault, so the CPU would restart the faulting instruction
 			// since we "handled" this exception, we need to skip it
 			stackLayout->origHandlerStack.eip += length;
+
 			return true;
 		}
 	}
@@ -191,6 +239,7 @@ VOID __declspec(naked) hookStub()
 		
 		// just call first original handler
 		oldHandler:
+		//int		3
 		pop		gs
 		pop		fs
 		pop		es
@@ -203,9 +252,21 @@ VOID __declspec(naked) hookStub()
 #ifdef __cplusplus
 extern "C" {
 #endif
-BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOOLEAN bRtdscMethodIncreasing)
+BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOOLEAN bRtdscMethodIncreasing, PCHAR *pExclusionList, int CountExclusionFilename)
 {
 	
+	if (ZwQueryInformationProcess == NULL)
+	{
+		UNICODE_STRING routineName; 
+		
+		RtlInitUnicodeString(&routineName, L"ZwQueryInformationProcess"); 
+		ZwQueryInformationProcess = (ZWQUERYINFORMATIONPROCESS) MmGetSystemRoutineAddress(&routineName); 
+		if (ZwQueryInformationProcess == NULL) 
+		{	
+			DbgPrint("[RDTSEMU_initializeHooks] Failed to get ZwQueryInformationProcess function address\n");
+			return false; 
+		}
+	}
 	// Make sure either IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST or IOCTL_RDTSCEMU_METHOD_INCREASING ctlcode has been sent 
 	if (ullRtdscValue > 0 || ulRtdscValue > 0)
 	{
@@ -219,6 +280,15 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 		}
 		else
 			g_RTDSCEmuConstValue = ulRtdscValue;
+
+		// Initialize exclusion parameters
+		if (CountExclusionFilename > 0 && MmIsAddressValid(pExclusionList) && MmIsAddressValid(*pExclusionList))
+		{
+			g_tempexclusionfilelist = pExclusionList;
+			g_pExclusionList = pExclusionList;
+			g_countfilename = CountExclusionFilename;
+			g_exclusionparamset = true;
+		}
 		// load CR4 register into EAX, set TSD flag and update CR4 from EAX
 		for (CCHAR i=0; i<KeNumberProcessors; ++i)
 		{
@@ -226,10 +296,10 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 			hookInterrupt(hookStub, 0xD, &origHandlers[i]);
 			ENABLE_TSD;
 		}
-		return TRUE;
+		return true;
 	}
 	else
-		return FALSE;
+		return false;
 }
 
 VOID RDTSEMU_removeHooks()
@@ -240,6 +310,63 @@ VOID RDTSEMU_removeHooks()
 		CLEAR_TSD;
 		hookInterrupt((PVOID)origHandlers[i], 0xD, NULL);
 	}
+}
+
+// Call ExFreePoolWithTag to free pImagePath
+// Ref: http://www.osronline.com/showthread.cfm?link=183409
+PUNICODE_STRING GetProcessNameByPid(HANDLE pid)
+{
+	HANDLE hProcessHandle;
+	PEPROCESS pEproc = NULL;
+	PUNICODE_STRING pImagePath = NULL;
+	const ULONG uImageMaxPath = sizeof(UNICODE_STRING) + _MAX_PATH;
+	ULONG retlen;
+	ULONG ulBufferLength;
+	WCHAR wImageNameBuffer[uImageMaxPath];
+	NTSTATUS status = PsLookupProcessByProcessId(pid, &pEproc);
+
+	if (status != STATUS_SUCCESS)
+		return NULL;
+
+	__try{
+
+		status = ObOpenObjectByPointer(pEproc, OBJ_KERNEL_HANDLE, NULL, GENERIC_READ, NULL, KernelMode, &hProcessHandle);
+
+		ObDereferenceObject(pEproc);
+
+		if (status != STATUS_SUCCESS)
+			return NULL;
+
+		RtlZeroMemory(wImageNameBuffer, uImageMaxPath);
+
+		status = ZwQueryInformationProcess(hProcessHandle, ProcessImageFileName, &wImageNameBuffer, uImageMaxPath, &retlen);
+
+		if (status != STATUS_SUCCESS)
+			return NULL;
+
+		ZwClose(hProcessHandle);
+
+		pImagePath = (PUNICODE_STRING)ExAllocatePoolWithTag(NonPagedPool, retlen, 'vmde');
+
+		if (pImagePath == NULL)
+			return NULL;
+
+		pImagePath->Length = *(USHORT*)wImageNameBuffer;
+		pImagePath->MaximumLength = *(USHORT*)wImageNameBuffer+2;
+
+		RtlCopyUnicodeString(pImagePath, (UNICODE_STRING*)wImageNameBuffer);
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER)
+	{
+		__asm{
+			int 3
+		}
+		KdPrint(("[DBG] pImagePath: 0x%08x\n", pImagePath));
+		KdPrint(("[DBG] wImageNameBuffer: 0x%08x\n", wImageNameBuffer));
+	}
+
+	return pImagePath;
+
 }
 #ifdef __cplusplus
 }; // extern "C"

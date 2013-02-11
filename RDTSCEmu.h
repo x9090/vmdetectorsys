@@ -45,17 +45,30 @@ ULONG g_RTDSCEmuDelta = 0;
 ULONGLONG g_RTDSCEmuRdtscvalue = 0;
 ULONG g_RTDSCEmuConstValue = 0;
 
+// Exclusion parameters flag
+BOOLEAN g_exclusionparamset = FALSE;
+PCHAR *g_pExclusionList = NULL;
+
 #define IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 #define IOCTL_RDTSCEMU_METHOD_INCREASING CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 
+typedef NTSTATUS (NTAPI *ZWQUERYINFORMATIONPROCESS)(
+	IN  HANDLE			 ProcessHandle,
+	IN  PROCESSINFOCLASS ProcessInformationClass,
+	OUT PVOID			 ProcessInformation,
+	IN  ULONG			 ProcessInformationLength,
+	OUT PULONG           ReturnLength OPTIONAL);
+
+ZWQUERYINFORMATIONPROCESS ZwQueryInformationProcess;
 //////////////////////////////////////////////////////////////////////////
 // Function Prototypes
 //////////////////////////////////////////////////////////////////////////
 #ifdef __cplusplus
 extern "C" {
 #endif
-BOOLEAN RDTSEMU_initializeHooks(ULONGLONG, ULONG, BOOLEAN);
-VOID RDTSEMU_removeHooks();
+BOOLEAN RDTSEMU_initializeHooks(ULONGLONG, ULONG, BOOLEAN, PCHAR*, int);
+VOID	RDTSEMU_removeHooks();
+PUNICODE_STRING	GetProcessNameByPid(HANDLE);
 #ifdef __cplusplus
 }; // extern "C"
 #endif

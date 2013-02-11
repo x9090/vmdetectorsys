@@ -2,7 +2,6 @@
 
 #define MAX_PATH 256
 
-#define MAX_PATH 256
 /*
 	VmDetectorSys - Main file
 	This file contains a very simple implementation of a WDM driver. Note that it does not support all
@@ -22,6 +21,7 @@
 		http://bazislib.sysprogs.org/
 */
 
+void	 SetDebugBreak();
 void	 VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject);
 BOOLEAN	 VmDetectorPatchStorageProperty();
 BOOLEAN  VmDetectorPatchVmDiskReg();
@@ -60,7 +60,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	DbgPrint("[DriverEntry] Called DriverEntry!\n");
 	
 	// Initialize driver's device name
-	RtlInitUnicodeString(&usDevName, L"\\Device\\VmDetectorSys");
+	RtlInitUnicodeString(&usDevName, SYS_DEVICE_NAME);
 
 	// Create driver's device object
 	status = IoCreateDevice(
@@ -90,7 +90,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	pDeviceExtension->usDeviceName = usDevName;
 
 	// Create symbolic link
-	RtlInitUnicodeString(&usSymlinkName, L"\\??\\VmDetectorSys");
+	RtlInitUnicodeString(&usSymlinkName, SYS_SYMBOL_NAME);
 	pDeviceExtension->usSymlinkName = usSymlinkName;
 	status = IoCreateSymbolicLink(&usSymlinkName, &usDevName);
 
@@ -175,18 +175,25 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 	NTSTATUS status = STATUS_SUCCESS;
 	BOOLEAN bResult;
 	int dwOutputBufferLength;
+	int dwInputBufferLength;
+	ULONG info = 0;
 	PCHAR pBuf=NULL;
+	PCHAR pFileNameBuf=NULL;
 	bResult = FALSE;
 
 	KdPrint(("[DBG] VmDetectorSysDispatchIOControl => called.\n"));
 
 	pIoCurrentStack = IoGetCurrentIrpStackLocation(Irp);
 
+	dwInputBufferLength  = pIoCurrentStack->Parameters.DeviceIoControl.InputBufferLength;
 	dwOutputBufferLength = pIoCurrentStack->Parameters.DeviceIoControl.OutputBufferLength;
 
-	KdPrint(("[DBG] VmDetectorSysDispatchIOControl => user address: 0x%08x\n", MmGetMdlVirtualAddress(Irp->MdlAddress)));
-
-	pBuf = (PCHAR)MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
+	// Irp->MdlAddress is an output buffer address
+	if (Irp->MdlAddress)
+	{
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => user address: 0x%08x\n", MmGetMdlVirtualAddress(Irp->MdlAddress)));
+		pBuf = (PCHAR)MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
+	}
 
 	switch(pIoCurrentStack->Parameters.DeviceIoControl.IoControlCode)
 	{
@@ -197,6 +204,7 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 		bResult = VmDetectorPatchStorageProperty();
 		if (bResult && dwOutputBufferLength == sizeof(dwOutputBufferLength))
 			*pBuf = bResult;
+		info = dwOutputBufferLength;
 		break;
 
 	case IOCTL_VMDETECTORSYS_VMDISKREG_FIX:
@@ -205,36 +213,38 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 		bResult = VmDetectorPatchVmDiskReg();
 		if (bResult && dwOutputBufferLength == sizeof(dwOutputBufferLength))
 			*pBuf = bResult;
+		info = dwOutputBufferLength;
 		break;
 
 	// Initialize hook to RDTSC interrupt handler
 	case IOCTL_VMDETECTORSYS_RTDSC_HOOK:
 
 		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_RTDSC_HOOK control code executed\n"));
-		bResult = RDTSEMU_initializeHooks(g_ullRdtscValue, g_ulRdtscValue, g_bRtdscMethodIncreasing);
+		bResult = RDTSEMU_initializeHooks(g_ullRdtscValue, g_ulRdtscValue, g_bRtdscMethodIncreasing, g_tempexclusionfilelist, g_countfilename);
 		if (bResult && dwOutputBufferLength == sizeof(dwOutputBufferLength))
 			*pBuf = bResult;
+		info = dwOutputBufferLength;
 		break;
 
 	// Set constant value to RDTSC
 	case IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST:
 
 		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST control code executed\n"));
-		if (pIoCurrentStack->Parameters.DeviceIoControl.InputBufferLength == sizeof(ULONG))
+		if (dwInputBufferLength == sizeof(ULONG))
 		{
 			g_bRtdscMethodIncreasing = FALSE;
 			g_ulRdtscValue = *(ULONG*)Irp->AssociatedIrp.SystemBuffer;
 		}
 		else 
 			status = STATUS_INVALID_PARAMETER;
+		info = dwInputBufferLength;
 		break;
 
 	// Set delta value to RDTSC
 	case IOCTL_RDTSCEMU_METHOD_INCREASING:
 
 		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_RDTSCEMU_METHOD_INCREASING control code executed\n"));
-
-		if (pIoCurrentStack->Parameters.DeviceIoControl.InputBufferLength == sizeof(ULONG))
+		if (dwInputBufferLength == sizeof(ULONG))
 		{
 			__asm
 			{
@@ -252,10 +262,42 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 			// set delta
 			g_ulRdtscValue = *(PULONG)(Irp->AssociatedIrp.SystemBuffer);
 			g_bRtdscMethodIncreasing = TRUE;
-			Irp->IoStatus.Status = STATUS_SUCCESS;
 		}
 		else 
 			status = STATUS_INVALID_PARAMETER;
+		info = dwInputBufferLength;
+		break;
+
+	// Get the number of exclusion file names
+	case IOCTL_VMDETECTORSYS_SEND_COUNT_FN:
+		
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SEND_COUNT_FN control code executed\n"));
+		g_countfilename = *(int*)Irp->AssociatedIrp.SystemBuffer;
+		if (g_countfilename < 0)
+			KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SEND_COUNT_FN - g_countfilename count 0?\n"));
+		else
+		{
+			g_exclusionfilelist = (PCHAR*)ExAllocatePoolWithTag(NonPagedPool, sizeof(PCHAR)*g_countfilename, 'vmde');
+			g_tempexclusionfilelist = g_exclusionfilelist;
+		}
+		info = dwInputBufferLength;
+		break;
+
+	// Get list of exclusion file names from vmdetector.ini
+	case IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION:
+
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION control code executed\n"));
+		pFileNameBuf = (PCHAR)Irp->AssociatedIrp.SystemBuffer;
+		DbgPrint("[IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION] Exclusion file name: %s\n", pFileNameBuf);
+		if (strlen(pFileNameBuf) >= (size_t)dwInputBufferLength)
+		{	
+			PCHAR pBuf = (PCHAR)ExAllocatePoolWithTag(NonPagedPool, dwInputBufferLength+1, 'vmde'); // Include terminating null character
+			RtlZeroMemory(pBuf, dwInputBufferLength+1);
+			RtlCopyMemory(pBuf, pFileNameBuf, dwInputBufferLength);
+			*g_exclusionfilelist = pBuf;
+			g_exclusionfilelist++;
+		}
+		info = dwInputBufferLength;
 		break;
 
 	default:
@@ -267,7 +309,7 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 	Irp->IoStatus.Status = status;
 
 	// Important to set the Information
-	Irp->IoStatus.Information = dwOutputBufferLength;
+	Irp->IoStatus.Information = info;
 
 	IoCompleteRequest(Irp, IO_NO_INCREMENT);
 
@@ -317,7 +359,10 @@ BOOLEAN VmDetectorPatchStorageProperty()
 
 	if(strcmp(pVendorId, "VMware Virtual IDE Hard Drive") == 0)
 	{
-		memcpy(pVendorId, "VMw@re Virtu@l IDE H@rd Driv3\0__________\012345678\001234567890123456789012345678901234678", 89);
+		memcpy(pVendorId, "VMw@re Virtu@l IDE H@rd Driv3", 29);
+		memcpy(pVendorId+31, "__________", 10);
+		memcpy(pVendorId+42, "12345678", 8);
+		memcpy(pVendorId+51, "01234567890123456789012345678901234678", 38);
 		ObDereferenceObject(pDevObj);
 		ObDereferenceObject(DR0_FileObject);
 		return TRUE;
@@ -420,4 +465,14 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	ExFreePoolWithTag(pvfi, 'vmd');
 	ZwClose(hKey);
 	return FALSE;
+}
+
+VOID SetDebugBreak()
+{
+	if (DEBUG)
+	{
+		__asm {
+			int 3
+		}
+	}
 }
