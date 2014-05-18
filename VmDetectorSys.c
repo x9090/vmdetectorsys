@@ -25,6 +25,7 @@ void	 SetDebugBreak();
 void	 VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject);
 BOOLEAN	 VmDetectorPatchStorageProperty();
 BOOLEAN  VmDetectorPatchVmDiskReg();
+BOOLEAN  VmDetectorPatchVmKernelModulesName(IN PDRIVER_OBJECT DriverObject);
 NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 NTSTATUS VmDetectorSysCreateClose(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 NTSTATUS VmDetectorSysDefaultHandler(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
@@ -47,6 +48,60 @@ static const GUID GUID_VmDetectorSysInterface = {0x3E58AF2A, 0xce92, 0x42f1, {0x
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  RegistryPath);
 #endif
 
+VOID GetOSVersion ()
+/*++
+
+Reference: sfilter
+
+Routine Description:
+
+    This routine reads the current OS version using the correct routine based
+    on what routine is available.
+
+Arguments:
+
+    None.
+    
+Return Value:
+
+    None.
+
+--*/
+{
+	UNICODE_STRING functionName;
+	RTLGETVERSION RtlGetVersion;
+
+	RtlInitUnicodeString( &functionName, L"RtlGetVersion" );
+
+	RtlGetVersion = (RTLGETVERSION)MmGetSystemRoutineAddress( &functionName );
+
+    if (NULL != RtlGetVersion) {
+
+        RTL_OSVERSIONINFOW versionInfo;
+        NTSTATUS status;
+
+        //
+        //  VERSION NOTE: RtlGetVersion does a bit more than we need, but
+        //  we are using it if it is available to show how to use it.  It
+        //  is available on Windows XP and later.  RtlGetVersion and
+        //  RtlVerifyVersionInfo (both documented in the IFS Kit docs) allow
+        //  you to make correct choices when you need to change logic based
+        //  on the current OS executing your code.
+        //
+
+        versionInfo.dwOSVersionInfoSize = sizeof( RTL_OSVERSIONINFOW );
+
+        status = RtlGetVersion( &versionInfo );
+
+        ASSERT( NT_SUCCESS( status ) );
+
+        g_OsMajorVersion = versionInfo.dwMajorVersion;
+        g_OsMinorVersion = versionInfo.dwMinorVersion;
+	}
+
+	return;     
+}
+
 NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  RegistryPath)
 {
 	unsigned i;
@@ -57,8 +112,11 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	UNICODE_STRING		usSymlinkName;
 	BOOLEAN				bFix;
 
-	DbgPrint("[DriverEntry] Called DriverEntry!\n");
-	
+	// Get OS version first
+	GetOSVersion ();
+
+	DbgPrint("[DriverEntry] Called DriverEntry. Platform=%d.%d\n", g_OsMajorVersion, g_OsMinorVersion);
+
 	// Initialize driver's device name
 	RtlInitUnicodeString(&usDevName, SYS_DEVICE_NAME);
 
@@ -112,7 +170,11 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	DriverObject->DriverUnload = VmDetectorSysUnload;
 	DriverObject->DriverStartIo = NULL;
 
+	// Test function prototypes here
 	//bFix = VmDetectorPatchVmDiskReg();
+
+	// Always do VMware kernel module name patching
+	bFix = VmDetectorPatchVmKernelModulesName(DriverObject);
 
 	return STATUS_SUCCESS;
 }
@@ -467,12 +529,85 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	return FALSE;
 }
 
-VOID SetDebugBreak()
+BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 {
-	if (DEBUG)
+	BOOLEAN	result = FALSE;
+	PLDR_DATA_TABLE_ENTRY CurrentLdrEntry;
+	PLIST_ENTRY	Head;
+	PLIST_ENTRY	Entry;
+
+	KdPrint(("[%s] Entry point\n", __FUNCTION__));
+
+	if (IS_WINDOWSXP())
 	{
-		__asm {
-			int 3
+		KdPrint(("[%s] Is WINXP\n", __FUNCTION__));
+	}
+	else if (IS_WINDOWS7_OR_LATER())
+	{
+		KdPrint(("[%s] Is WIN7\n", __FUNCTION__));
+	}
+
+	Entry = ((PLIST_ENTRY)DriverObject->DriverSection)->Flink;
+
+	Head = Entry;
+
+	do{
+		UNICODE_STRING usModuleName;
+		ULONG	ulBaseAddress;
+
+		CurrentLdrEntry = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+
+		usModuleName = CurrentLdrEntry->BaseDllName;
+		ulBaseAddress = (ULONG)CurrentLdrEntry->DllBase;
+
+		if (usModuleName.Length > 0 && usModuleName.MaximumLength > 0 && usModuleName.Buffer != NULL)
+		{
+			KdPrint(("[%s] module: %wZ, address: 0x%08x\n", __FUNCTION__, &usModuleName, ulBaseAddress));
+
+			// Find module name that starts with "vm" and replaced them	with "xx"		
+			{
+				WCHAR wModuleName[MAX_PATH*2] = {0};
+
+				wcsncpy(wModuleName, usModuleName.Buffer, usModuleName.MaximumLength);
+					
+				// Convert the first character to lower case
+				if (wModuleName[0] <= 'Z' && wModuleName[0] >= 'A')
+					wModuleName[0] -= ('Z' - 'z');
+
+				if (wModuleName[1] <= 'Z' && wModuleName[1] >= 'A')
+					wModuleName[1] -= ('Z' - 'z');
+
+				if (wModuleName[0] == 'v' && wModuleName[1] == 'm')
+				{
+					wModuleName[0] = 'x';
+					wModuleName[1] = 'x';
+
+					wcsncpy(usModuleName.Buffer, wModuleName, 2);
+
+					result = TRUE; 
+				}
+			}
 		}
+
+		// Next module
+		Entry = CurrentLdrEntry->InLoadOrderLinks.Flink;
+
+	}while(Entry != Head);
+
+	return result;
+}
+
+VOID __declspec(naked) SetDebugBreak()
+{
+	__asm {
+		pushad
+		mov ebx, DEBUG
+		xor eax, eax
+		cmp eax, ebx
+		jz quit
+		int 3
+quit:
+		popad
+		retn
 	}
 }

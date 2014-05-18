@@ -40,14 +40,14 @@ enum RDTSCMode
 };
 
 // emulation parameters
-BOOLEAN g_RTDSCEmuMethodIncreasing = FALSE;
-ULONG g_RTDSCEmuDelta = 0;
-ULONGLONG g_RTDSCEmuRdtscvalue = 0;
-ULONG g_RTDSCEmuConstValue = 0;
+BOOLEAN		g_RTDSCEmuMethodIncreasing = FALSE;
+ULONG		g_RTDSCEmuDelta = 0;
+ULONGLONG	g_RTDSCEmuRdtscvalue = 0;
+ULONG		g_RTDSCEmuConstValue = 0;
 
 // Exclusion parameters flag
 BOOLEAN g_exclusionparamset = FALSE;
-PCHAR *g_pExclusionList = NULL;
+PCHAR	*g_pExclusionList = NULL;
 
 #define IOCTL_RDTSCEMU_METHOD_ALWAYS_CONST CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
 #define IOCTL_RDTSCEMU_METHOD_INCREASING CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_IN_DIRECT, FILE_ANY_ACCESS)
@@ -66,9 +66,9 @@ ZWQUERYINFORMATIONPROCESS ZwQueryInformationProcess;
 #ifdef __cplusplus
 extern "C" {
 #endif
+PUNICODE_STRING	GetProcessNameByPid(HANDLE);
 BOOLEAN RDTSEMU_initializeHooks(ULONGLONG, ULONG, BOOLEAN, PCHAR*, int);
 VOID	RDTSEMU_removeHooks();
-PUNICODE_STRING	GetProcessNameByPid(HANDLE);
 #ifdef __cplusplus
 }; // extern "C"
 #endif

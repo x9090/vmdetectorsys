@@ -1,6 +1,8 @@
 TARGETNAME=VmDetectorSys
 TARGETTYPE=DRIVER
 
+C_DEFINES=$(C_DEFINES) -D_WINXP -D_DEBUG
+
 SOURCES=VmDetectorSys.c \
 	RDTSCEmu.cpp \
 	distorm_dummy.c \
