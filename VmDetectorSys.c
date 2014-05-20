@@ -531,7 +531,7 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 {
-	BOOLEAN	result = FALSE;
+	BOOLEAN	result1, result2 = FALSE;
 	PLDR_DATA_TABLE_ENTRY CurrentLdrEntry;
 	PLIST_ENTRY	Head;
 	PLIST_ENTRY	Entry;
@@ -553,16 +553,18 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 
 	do{
 		UNICODE_STRING usModuleName;
+		UNICODE_STRING usFullModuleName;
 		ULONG	ulBaseAddress;
 
 		CurrentLdrEntry = CONTAINING_RECORD(Entry, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
 
+		usFullModuleName = CurrentLdrEntry->FullDllName;
 		usModuleName = CurrentLdrEntry->BaseDllName;
 		ulBaseAddress = (ULONG)CurrentLdrEntry->DllBase;
 
 		if (usModuleName.Length > 0 && usModuleName.MaximumLength > 0 && usModuleName.Buffer != NULL)
 		{
-			KdPrint(("[%s] module: %wZ, address: 0x%08x\n", __FUNCTION__, &usModuleName, ulBaseAddress));
+			KdPrint(("[%s] Full modulename: %wZ, module: %wZ, Imgae base address: 0x%08x, CurrentLdrEntry: 0x%08x\n", __FUNCTION__, &usFullModuleName, &usModuleName, ulBaseAddress, CurrentLdrEntry));
 
 			// Find module name that starts with "vm" and replaced them	with "xx"		
 			{
@@ -584,7 +586,39 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 
 					wcsncpy(usModuleName.Buffer, wModuleName, 2);
 
-					result = TRUE; 
+					RtlSecureZeroMemory(wModuleName, sizeof(wModuleName));
+
+					result1 = TRUE; 
+				}
+
+				// Patch the stirng in FullModuleName too
+				{
+					WCHAR *wTemp = wcsrchr(usFullModuleName.Buffer, L'\\');
+
+					if (wTemp != NULL)
+					{
+						ULONG dwPathLen = (ULONG)(wTemp+1 - usFullModuleName.Buffer);
+
+						wcsncpy(wModuleName, wTemp+1, (usFullModuleName.MaximumLength/sizeof(WCHAR) - dwPathLen));
+
+						// Convert the first character to lower case
+						if (wModuleName[0] <= 'Z' && wModuleName[0] >= 'A')
+							wModuleName[0] -= ('Z' - 'z');
+
+						if (wModuleName[1] <= 'Z' && wModuleName[1] >= 'A')
+							wModuleName[1] -= ('Z' - 'z');
+
+						if (wModuleName[0] == 'v' && wModuleName[1] == 'm')
+						{
+							wModuleName[0] = 'x';
+							wModuleName[1] = 'x';
+
+							wcsncpy(usFullModuleName.Buffer+dwPathLen, wModuleName, 2);
+
+							result2 = TRUE; 
+						}
+					}
+
 				}
 			}
 		}
@@ -594,7 +628,7 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 
 	}while(Entry != Head);
 
-	return result;
+	return result1&result2?TRUE:FALSE;
 }
 
 VOID __declspec(naked) SetDebugBreak()
