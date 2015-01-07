@@ -386,7 +386,7 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	PDEVICE_OBJECT		DR0_DeviceObject;
 	UNICODE_STRING		DR0_DeviceName; 
 	UNICODE_STRING		FltDrvName;
-	WCHAR				wFltDriverName[MAX_PATH*2] = {0};
+	WCHAR				wFltDriverName[MAX_PATH*sizeof(WCHAR)] = {0};
 	WCHAR				*wDr0DevName=L"\\Device\\Harddisk0\\DR0";
 
 
@@ -568,7 +568,7 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 
 			// Find module name that starts with "vm" and replaced them	with "xx"		
 			{
-				WCHAR wModuleName[MAX_PATH*2] = {0};
+				WCHAR wModuleName[MAX_PATH*sizeof(WCHAR)] = {0};
 
 				wcsncpy(wModuleName, usModuleName.Buffer, usModuleName.MaximumLength);
 					
@@ -591,7 +591,7 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 					result1 = TRUE; 
 				}
 
-				// Patch the stirng in FullModuleName too
+				// Patch the string in FullModuleName too
 				{
 					WCHAR *wTemp = wcsrchr(usFullModuleName.Buffer, L'\\');
 
