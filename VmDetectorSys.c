@@ -593,12 +593,23 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 
 				// Patch the string in FullModuleName too
 				{
-					WCHAR *wTemp = wcsrchr(usFullModuleName.Buffer, L'\\');
+					WCHAR moduleNameBuffer[MAX_PATH*sizeof(WCHAR)] = {0};
+					WCHAR *wTemp = NULL;
+
+					// Copy the full module name into a temporary buffer according to UNICODE_STRING.Length (note: the length is counted based as wide character)
+					wcsncpy(moduleNameBuffer, usFullModuleName.Buffer, usFullModuleName.MaximumLength/sizeof(WCHAR));
+					
+					// Get the module name only without file path
+					wTemp = wcsrchr(moduleNameBuffer, L'\\');
 
 					if (wTemp != NULL)
 					{
-						ULONG dwPathLen = (ULONG)(wTemp+1 - usFullModuleName.Buffer);
+						ULONG dwPathLen = (ULONG)(wTemp+1 - moduleNameBuffer);
 
+						// Is integer overflow?
+						ASSERT((int)(usFullModuleName.MaximumLength/sizeof(WCHAR) - dwPathLen) < 0);
+
+						// Get the full module name without file path
 						wcsncpy(wModuleName, wTemp+1, (usFullModuleName.MaximumLength/sizeof(WCHAR) - dwPathLen));
 
 						// Convert the first character to lower case
