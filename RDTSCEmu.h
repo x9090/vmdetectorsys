@@ -41,7 +41,7 @@ enum RDTSCMode
 
 // emulation parameters
 BOOLEAN		g_RTDSCEmuMethodIncreasing = FALSE;
-ULONG		g_RTDSCEmuDelta = 0;
+ULONG		g_RTDSCEmuDelta;
 ULONGLONG	g_RTDSCEmuRdtscvalue = 0;
 ULONG		g_RTDSCEmuConstValue = 0;
 

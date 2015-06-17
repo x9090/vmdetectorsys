@@ -127,6 +127,7 @@ ULONG isRDTSC(PVOID address)
 
 // performs the actual emulation
 // return false if original handler should be executed, true otherwise
+ULONG randomnum = 0;
 BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 {
 	
@@ -179,11 +180,25 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 			// Free allocated pool memory by kernel
 			ExFreePoolWithTag(pImageName, 'vmde');
 			
-			// None excluded name will be processed here
+			// Other settings specified in vmdetector.ini will be processed here
 			if (g_RTDSCEmuMethodIncreasing)
 			{
 				static ULONG seed = 0x666;
-				if (g_RTDSCEmuDelta) g_RTDSCEmuRdtscvalue += RtlRandomEx(&seed) % g_RTDSCEmuDelta;
+				ULONG edx = (ULONG)(g_RTDSCEmuRdtscvalue >> 32);
+
+				// Get random number that is consistent through all subsequent RDTSC call
+				if (g_RTDSCEmuDelta && randomnum == 0) 
+					randomnum = RtlRandomEx(&seed) % g_RTDSCEmuDelta;
+
+				// Get new lowest significant bytes of rdtsc value				
+				g_RTDSCEmuRdtscvalue = g_RTDSCEmuRdtscvalue + (ULONG)randomnum;
+				// Cast 32-bit int to 64-bit int
+				ULONGLONG ullrandomnum = randomnum;
+				// Get new highest significant bytes of rdtsc value	
+				g_RTDSCEmuRdtscvalue = g_RTDSCEmuRdtscvalue + (ullrandomnum << 32);
+
+				KdPrint(("[%s] g_RTDSCEmuDelta: 0x%x, randomnum: 0x%x, new rdtsc: 0x%I64x\n", __FUNCTION__, g_RTDSCEmuDelta, randomnum, g_RTDSCEmuRdtscvalue));
+
 				stackLayout->context.eax = (ULONG)g_RTDSCEmuRdtscvalue;
 				stackLayout->context.edx = (ULONG)(g_RTDSCEmuRdtscvalue >> 32);
 			}
@@ -289,6 +304,11 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 			g_countfilename = CountExclusionFilename;
 			g_exclusionparamset = true;
 		}
+		// Ref: http://newgre.net/node/65
+		// Enable "timestamp dsiable" flag at CR4 ->
+		// Call RDTSC from UM -> raised #GP (general protection fault) exception ->
+		// IDT handler@#13 will be triggered ->
+		// Call our replaced IDT handler -> *END*
 		// load CR4 register into EAX, set TSD flag and update CR4 from EAX
 		for (CCHAR i=0; i<KeNumberProcessors; ++i)
 		{

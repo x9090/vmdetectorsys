@@ -607,7 +607,7 @@ BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)
 						ULONG dwPathLen = (ULONG)(wTemp+1 - moduleNameBuffer);
 
 						// Is integer overflow?
-						ASSERT((int)(usFullModuleName.MaximumLength/sizeof(WCHAR) - dwPathLen) < 0);
+						ASSERT((int)(usFullModuleName.MaximumLength/sizeof(WCHAR) - dwPathLen) > 0);
 
 						// Get the full module name without file path
 						wcsncpy(wModuleName, wTemp+1, (usFullModuleName.MaximumLength/sizeof(WCHAR) - dwPathLen));
