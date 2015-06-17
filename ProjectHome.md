@@ -1,0 +1,1 @@
+This driver contains the VMware patching capability
