@@ -21,25 +21,57 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="VmDetectorSys.c">
-      <Filter>Source files</Filter>
-    </ClCompile>
-    <ClCompile Include="HookInt.cpp">
-      <Filter>Source files</Filter>
-    </ClCompile>
-    <ClCompile Include="RDTSCEmu.cpp">
-      <Filter>Source files</Filter>
-    </ClCompile>
-    <ClCompile Include="distorm_dummy.c">
-      <Filter>Source files</Filter>
-    </ClCompile>
+    <ClInclude Include="HookInt.h">
+      <Filter>Header files</Filter>
+    </ClInclude>
+    <ClInclude Include="RDTSCEmu.h" />
+    <ClInclude Include="VmDetectorSys.h" />
+    <ClInclude Include="HookInt.h">
+      <Filter>Header files</Filter>
+    </ClInclude>
+    <ClInclude Include="RDTSCEmu.h" />
+    <ClInclude Include="VmDetectorSys.h" />
+    <ClInclude Include="HookInt.h">
+      <Filter>Header files</Filter>
+    </ClInclude>
+    <ClInclude Include="RDTSCEmu.h" />
+    <ClInclude Include="VmDetectorSys.h" />
+    <ClInclude Include="distorm\src\decoder.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\distorm.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\instructions.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\insts.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\operands.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\prefix.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\textdefs.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\wstring.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="distorm\src\x86defs.h">
+      <Filter>Source files\distorm</Filter>
+    </ClInclude>
+    <ClInclude Include="VmDetectorUtils.h">
+      <Filter>Header files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="distorm\src\decoder.c">
       <Filter>Source files\distorm</Filter>
     </ClCompile>
     <ClCompile Include="distorm\src\distorm.c">
-      <Filter>Source files\distorm</Filter>
-    </ClCompile>
-    <ClCompile Include="distorm\src\dummy.c">
       <Filter>Source files\distorm</Filter>
     </ClCompile>
     <ClCompile Include="distorm\src\instructions.c">
@@ -54,9 +86,6 @@
     <ClCompile Include="distorm\src\prefix.c">
       <Filter>Source files\distorm</Filter>
     </ClCompile>
-    <ClCompile Include="distorm\src\pydistorm.c">
-      <Filter>Source files\distorm</Filter>
-    </ClCompile>
     <ClCompile Include="distorm\src\textdefs.c">
       <Filter>Source files\distorm</Filter>
     </ClCompile>
@@ -66,28 +95,17 @@
     <ClCompile Include="distorm\src\x86defs.c">
       <Filter>Source files\distorm</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="HookInt.h">
-      <Filter>Header files</Filter>
-    </ClInclude>
-    <ClInclude Include="RDTSCEmu.h">
-      <Filter>Header files</Filter>
-    </ClInclude>
-    <ClInclude Include="distorm\distorm.h">
-      <Filter>Header files\distorm</Filter>
-    </ClInclude>
-    <ClInclude Include="distorm\config.h">
-      <Filter>Header files\distorm</Filter>
-    </ClInclude>
-    <ClInclude Include="VmDetectorSys.h">
-      <Filter>Header files</Filter>
-    </ClInclude>
-    <ClInclude Include="stdafx.h">
-      <Filter>Header files</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="$(ProjectDir)\sources" />
+    <ClCompile Include="VmDetectorSys.c">
+      <Filter>Source files</Filter>
+    </ClCompile>
+    <ClCompile Include="HookInt.cpp">
+      <Filter>Source files</Filter>
+    </ClCompile>
+    <ClCompile Include="RDTSCEmu.cpp">
+      <Filter>Source files</Filter>
+    </ClCompile>
+    <ClCompile Include="VmDetectorUtils.cpp">
+      <Filter>Source files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

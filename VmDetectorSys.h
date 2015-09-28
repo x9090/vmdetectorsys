@@ -8,6 +8,11 @@
 #define DEBUG 0
 #endif
 
+// To avoid python.h explicitly linking debug version of python27_d.lib
+// error LNK1104: cannot open file 'python27_d.lib'
+// Add  'MS_NO_COREDLL' to preprocessor definition
+// Ref: http://guangboo.org/2013/01/17/solution-link-errorcannot-open-file-python27_dlib
+
 #ifdef _WINXP
 #define WINXP
 #endif
@@ -57,6 +62,7 @@
 #include <mountdev.h>
 #include <ntddvol.h>
 #include "RDTSCEmu.h"
+#include "VmDetectorUtils.h"
 
 BOOLEAN		g_bRtdscMethodIncreasing = FALSE;
 ULONGLONG	g_ullRdtscValue = 0;
@@ -74,8 +80,8 @@ extern int	g_countfilename = 0;
 //  in these global variables.
 //
 
-ULONG g_OsMajorVersion = 0;
-ULONG g_OsMinorVersion = 0;
+extern ULONG g_OsMajorVersion;
+extern ULONG g_OsMinorVersion;
 
 //////////////////////////////////////////////////////////////////////////
 // Data structures
@@ -159,12 +165,3 @@ typedef struct _LDR_DATA_TABLE_ENTRY               // 18 elements, 0x50 bytes (s
 NTKERNELAPI
 	PDEVICE_OBJECT
 	IoGetDeviceAttachmentBaseRef(__in PDEVICE_OBJECT DeviceObject);
-
-//////////////////////////////////////////////////////////////////////////
-// Dynamic link function pointer 
-//////////////////////////////////////////////////////////////////////////
-
-typedef NTSTATUS (*RTLGETVERSION) (
-	IN OUT PRTL_OSVERSIONINFOW VersionInformation
-	);
-

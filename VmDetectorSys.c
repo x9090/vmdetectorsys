@@ -445,7 +445,7 @@ BOOLEAN VmDetectorPatchStorageProperty()
 
 BOOLEAN VmDetectorPatchVmDiskReg()
 {
-	PKEY_VALUE_FULL_INFORMATION pvfi;
+	PKEY_VALUE_FULL_INFORMATION pvfi = NULL;
 	OBJECT_ATTRIBUTES	oaRegistryKey;
 	OBJECT_ATTRIBUTES	oaValueName;
 	UNICODE_STRING		usRegistryKey;
@@ -484,6 +484,9 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	if (status == STATUS_BUFFER_TOO_SMALL)
 	{
 		pvfi = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(NonPagedPool, ulSize, 'vmd');
+
+		if (pvfi == NULL)
+			return FALSE;
 
 		status = ZwQueryValueKey(
 			hKey,
