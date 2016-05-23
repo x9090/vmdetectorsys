@@ -232,7 +232,7 @@
     <ClInclude Include="distorm\src\textdefs.h" />
     <ClInclude Include="distorm\src\wstring.h" />
     <ClInclude Include="distorm\src\x86defs.h" />
-    <ClInclude Include="VmDetectorUtils.h" />
+    <!-- <ClInclude Include="VmDetectorUtils.h" /> -->
   </ItemGroup>
   <!-- /Necessary to pick up propper files from local directory when in the IDE-->
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

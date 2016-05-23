@@ -389,7 +389,6 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	WCHAR				wFltDriverName[MAX_PATH*sizeof(WCHAR)] = {0};
 	WCHAR				*wDr0DevName=L"\\Device\\Harddisk0\\DR0";
 
-
 	// Get the lowest device object (ATAPI) from DR0 devstack
 	RtlInitUnicodeString(&DR0_DeviceName, wDr0DevName);
 
@@ -408,17 +407,29 @@ BOOLEAN VmDetectorPatchStorageProperty()
 
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Filter driver name %ws\n", wFltDriverName));
 
-	
+	// TODO: Use documented data structure nt!_DEVICE_NODE to get the vendor ID
 	// ATAPI: atapi!DevObject->DeviceExtension + 0xD1
 	// SCSI: vmscsi!DevObject->DeviceExtension + 0x126
+	// LSI_SAS: DevObject->DeviceObjectExtension->DeviceNode (type nt!_DEVICE_NODE contains "InstancePath" field)
+	//          The actual driver that is responsible to format and return this data is 
+	//          from storport.sys (refer to storport_6.1.7601.17514.idb "RaGetUnitStorageDeviceProperty")
+	//			storport!DevObject->DeviceExtension+0x28->0x10
 	if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\atapi") == 0)
 		pVendorId = (PCHAR)pVendorId+0xD1;
 	else if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\vmscsi") == 0)
 		pVendorId = (PCHAR)pVendorId+0x126;
+	else if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\lsi_sas") == 0) // Windows 7 VM
+	{
+		PULONG pDevExtVendorData = NULL;
+		pDevExtVendorData = *(PULONG*)((PCHAR)pVendorId + 0x28);
+		pVendorId = (PCHAR)pDevExtVendorData + 0x8;
+	}
 
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Lowest device object of DR0 0x%08X\n", pDevObj));
 	KdPrint(("[DBG] VmDetectorPatchStorageProperty => Device Model: %s\n", pVendorId));
 
+	// On Windows XP
+	// atapi.sys
 	if(strcmp(pVendorId, "VMware Virtual IDE Hard Drive") == 0)
 	{
 		memcpy(pVendorId, "VMw@re Virtu@l IDE H@rd Driv3", 29);
@@ -429,9 +440,20 @@ BOOLEAN VmDetectorPatchStorageProperty()
 		ObDereferenceObject(DR0_FileObject);
 		return TRUE;
 	}
+	// On Windows XP
+	// scsi.sys
 	else if(strstr(pVendorId, "VMware, VMware Virtual") != NULL)
 	{
 		strncpy(pVendorId, "VMw@re, VMw@re Virtu@l", 22);
+		ObDereferenceObject(pDevObj);
+		ObDereferenceObject(DR0_FileObject);
+		return TRUE;
+	}
+	// On Windows 7
+	// storport.sys
+	else if (strstr(pVendorId, "VMware, VMware Virtual S1.0") != NULL)
+	{
+		strncpy(pVendorId, "VMw@re, VMw@re Virtua@l Sx.x", 28);
 		ObDereferenceObject(pDevObj);
 		ObDereferenceObject(DR0_FileObject);
 		return TRUE;
@@ -457,8 +479,24 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 	DbgPrint("Called VmDetectorPatchVmDiskReg\n");
 
-	RtlInitUnicodeString(&usRegistryKey, L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\Disk\\Enum");
-	RtlInitUnicodeString(&usValueName, L"0");
+	//
+	// On Windows 7
+	// We don't want to tamper the ACL of the SCSI disk registry key and we decided to change the value from driver 
+	// because the registry key only has READ access
+	// This is to counter WMI_DiskDrive check which cannot be filtered by wmifilter.sys like on Windows XP
+	//
+	if (g_OsMajorVersion == 6 && g_OsMinorVersion == 1)
+	{
+		// TODO: SYSTEM\\CurrentControlSet\\Enum\\SCSI\\Disk&Ven_VMware_&Prod_VMware_Virtual_S\\5&1982005&0&000000
+		RtlInitUnicodeString(&usRegistryKey, L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Enum\\SCSI\\Disk&Ven_VMware_&Prod_VMware_Virtual_S");
+		RtlInitUnicodeString(&usValueName, L"0");
+	}
+	else if (g_OsMajorVersion == 5)
+	{
+		RtlInitUnicodeString(&usRegistryKey, L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\Disk\\Enum");
+		RtlInitUnicodeString(&usValueName, L"0");
+	}
+
 
 	InitializeObjectAttributes(&oaRegistryKey, &usRegistryKey, OBJ_CASE_INSENSITIVE|OBJ_KERNEL_HANDLE, NULL, NULL );
 	InitializeObjectAttributes(&oaValueName, &usValueName, OBJ_CASE_INSENSITIVE|OBJ_KERNEL_HANDLE, NULL, NULL);
