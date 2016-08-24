@@ -21,8 +21,10 @@
 		http://bazislib.sysprogs.org/
 */
 
-void	 SetDebugBreak();
-void	 VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject);
+VOID	 SetDebugBreak();
+VOID	 VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject);
+VOID     VMDetectorRenameKey();
+BOOLEAN  VmDetectorPatchScsiSymLink();
 BOOLEAN	 VmDetectorPatchStorageProperty();
 BOOLEAN  VmDetectorPatchVmDiskReg();
 BOOLEAN  VmDetectorPatchVmKernelModulesName(IN PDRIVER_OBJECT DriverObject);
@@ -32,6 +34,12 @@ NTSTATUS VmDetectorSysDefaultHandler(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp
 NTSTATUS VmDetectorSysAddDevice(IN PDRIVER_OBJECT  DriverObject, IN PDEVICE_OBJECT  PhysicalDeviceObject);
 NTSTATUS VmDetectorSysPnP(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 
+// Undocumented native APIs
+ZWQUERYDIRECTORYOBJECT ZwQueryDirectoryObject = NULL;
+ZWOPENDIRECTORYOBJECT ZwOpenDirectoryObject = NULL;
+ZWRENAMEKEY _ZwRenameKey = NULL;
+
+// Device extension specific to the driver
 typedef struct _deviceExtension
 {
 	PDEVICE_OBJECT DeviceObject;
@@ -47,6 +55,46 @@ static const GUID GUID_VmDetectorSysInterface = {0x3E58AF2A, 0xce92, 0x42f1, {0x
 #ifdef __cplusplus
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  RegistryPath);
 #endif
+
+BOOLEAN ResolveNativeAPIs()
+{
+	// Initialize necessary native APIs
+
+	if (ZwQueryDirectoryObject == NULL)
+	{
+		UNICODE_STRING routineName;
+
+		RtlInitUnicodeString(&routineName, L"ZwQueryDirectoryObject");
+		ZwQueryDirectoryObject = (ZWQUERYDIRECTORYOBJECT)MmGetSystemRoutineAddress(&routineName);
+
+		if (ZwQueryDirectoryObject == NULL)
+			return FALSE;
+	}
+
+	if (ZwOpenDirectoryObject == NULL)
+	{
+		UNICODE_STRING routineName;
+
+		RtlInitUnicodeString(&routineName, L"ZwOpenDirectoryObject");
+		ZwOpenDirectoryObject = (ZWOPENDIRECTORYOBJECT)MmGetSystemRoutineAddress(&routineName);
+
+		if (ZwOpenDirectoryObject == NULL)
+			return FALSE;
+	}
+
+	if (_ZwRenameKey == NULL)
+	{
+		// TODO: Ugly hack :(
+		//       It is not possible to export the function using handy MmGetSystemRoutineAddress
+		if (g_OsMajorVersion == 6 && g_OsMinorVersion == 1)
+			_ZwRenameKey = (ZWRENAMEKEY)SYSTEMSERVICE(SYSCALL_ZWRENAMEKEY_WIN7);
+
+		if (_ZwRenameKey == NULL)
+			return FALSE;
+	}
+
+	return TRUE;
+}
 
 VOID GetOSVersion ()
 /*++
@@ -105,7 +153,7 @@ Return Value:
 NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  RegistryPath)
 {
 	unsigned i;
-	NTSTATUS			status;
+	NTSTATUS			status = STATUS_FAILED_DRIVER_ENTRY;
 	PDEVICE_OBJECT		DeviceObject;
 	PDEVICE_EXTENSION	pDeviceExtension;
 	UNICODE_STRING		usDevName;
@@ -113,9 +161,15 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	BOOLEAN				bFix;
 
 	// Get OS version first
-	GetOSVersion ();
+	GetOSVersion();
 
 	DbgPrint("[DriverEntry] Called DriverEntry. Platform=%d.%d\n", g_OsMajorVersion, g_OsMinorVersion);
+
+	if (!ResolveNativeAPIs())
+	{
+		DbgPrint("[%s] Failed in resolving neccessary native APIs\n", __FUNCTION__);
+		return status;
+	}
 
 	// Initialize driver's device name
 	RtlInitUnicodeString(&usDevName, SYS_DEVICE_NAME);
@@ -176,10 +230,15 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	// Always do VMware kernel module name patching
 	bFix = VmDetectorPatchVmKernelModulesName(DriverObject);
 
+	// Always do VM-identifiable registry keys which
+	// cannot be tackled from UM
+	// TODO: it might be more elegant to implement CmRegistryCallback
+	VMDetectorRenameKey();
+
 	return STATUS_SUCCESS;
 }
 
-void VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject)
+VOID VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject)
 {
 	UNICODE_STRING usSymbolicName;
 	PDEVICE_EXTENSION DeviceExtension;
@@ -269,6 +328,15 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 		info = dwOutputBufferLength;
 		break;
 
+	case IOCTL_VMDETECTORSYS_SCSI_FIX:
+
+		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SCSI_FIX control code executed\n"));
+		bResult = VmDetectorPatchScsiSymLink();
+		if (bResult && dwOutputBufferLength == sizeof(dwOutputBufferLength))
+			*pBuf = bResult;
+		info = dwOutputBufferLength;
+		break;
+
 	case IOCTL_VMDETECTORSYS_VMDISKREG_FIX:
 
 		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_VMDISKREG_FIX control code executed\n"));
@@ -339,7 +407,7 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 			KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SEND_COUNT_FN - g_countfilename count 0?\n"));
 		else
 		{
-			g_exclusionfilelist = (PCHAR*)ExAllocatePoolWithTag(NonPagedPool, sizeof(PCHAR)*g_countfilename, 'vmde');
+			g_exclusionfilelist = (PCHAR*)ExAllocatePoolWithTag(NonPagedPool, sizeof(PCHAR)*g_countfilename, SYS_TAG);
 			g_tempexclusionfilelist = g_exclusionfilelist;
 		}
 		info = dwInputBufferLength;
@@ -353,7 +421,7 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 		DbgPrint("[IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION] Exclusion file name: %s\n", pFileNameBuf);
 		if (strlen(pFileNameBuf) >= (size_t)dwInputBufferLength)
 		{	
-			PCHAR pBuf = (PCHAR)ExAllocatePoolWithTag(NonPagedPool, dwInputBufferLength+1, 'vmde'); // Include terminating null character
+			PCHAR pBuf = (PCHAR)ExAllocatePoolWithTag(NonPagedPool, dwInputBufferLength+1, SYS_TAG); // Include terminating null character
 			RtlZeroMemory(pBuf, dwInputBufferLength+1);
 			RtlCopyMemory(pBuf, pFileNameBuf, dwInputBufferLength);
 			*g_exclusionfilelist = pBuf;
@@ -378,8 +446,209 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 	return status;
 }
 
+/*
+*	Purpose: Rename VBOX PCI key to bypass pafish's vbox_wmi_check_row check
+*            example:
+*			 * HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\PCI\VEN_80EE&DEV_CAFE&SUBSYS_00000000&REV_00\3&267a616a&0&20
+*			 * HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\PCI\VEN_80EE&DEV_BEEF&SUBSYS_00000000&REV_00\3&267a616a&0&10
+*/
+VOID VMDetectorRenameKey()
+{
+	INT index = 0;
+	WCHAR *szListKeys[] = {
+		L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_80EE&DEV_CAFE&SUBSYS_00000000&REV_00",
+		L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_80EE&DEV_BEEF&SUBSYS_00000000&REV_00",
+		NULL
+	};
+
+
+	do
+	{
+		UNICODE_STRING usRegistryKey;
+		OBJECT_ATTRIBUTES oaRegistryKey;
+		UNICODE_STRING usNewRegKey;
+		NTSTATUS status;
+		HANDLE hKey;
+		USHORT KeyLength;
+
+		RtlInitUnicodeString(&usRegistryKey, szListKeys[index]);
+		InitializeObjectAttributes(&oaRegistryKey, &usRegistryKey, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+
+		status = ZwOpenKey(&hKey, KEY_ALL_ACCESS, &oaRegistryKey);
+
+		if (!NT_SUCCESS(status))
+		{
+			KdPrint(("[%s] Failed ZwOpenKey %wZ, %#x\n", __FUNCTION__, &usRegistryKey, status));
+			break;
+		}
+
+		DbgBreakPoint();
+		KdPrint(("[%s] Open \"%wZ\" successfully!\n", __FUNCTION__, &usRegistryKey));
+
+		// Initialize the new registry key name
+		KeyLength = (USHORT)wcslen(szListKeys[index]);
+		usNewRegKey.Length = KeyLength*sizeof(WCHAR);
+		usNewRegKey.MaximumLength = (KeyLength + 1)*sizeof(WCHAR);
+		usNewRegKey.Buffer = ExAllocatePoolWithTag(NonPagedPool, usNewRegKey.MaximumLength, SYS_TAG);
+		if (usNewRegKey.Buffer == NULL)
+			break;
+		RtlSecureZeroMemory(usNewRegKey.Buffer, usNewRegKey.MaximumLength);
+
+		// Set new registry key specifically
+		switch (index)
+		{
+		case 0:
+			RtlStringCchCopyW(usNewRegKey.Buffer, KeyLength + 1, L"VEN_80EE&DEV_C@FE&SUBSYS_00000000&REV_00");
+			break;
+		case 1:
+			RtlStringCchCopyW(usNewRegKey.Buffer, KeyLength + 1, L"VEN_80EE&DEV_B33F&SUBSYS_00000000&REV_00");
+			break;
+		default:
+			break;
+		}
+		
+		// Rename registry key
+		if (!NT_SUCCESS((status = _ZwRenameKey(hKey, &usNewRegKey))))
+			KdPrint(("[%s] Failed ZwRenameKey \"%wZ\", %#x\n", __FUNCTION__, &usNewRegKey, status));
+		else
+		{
+			KdPrint(("[%s] Renamed key \"%wZ\"!\n", __FUNCTION__, &usNewRegKey));
+			ZwFlushKey(hKey);
+		}
+
+		ExFreePoolWithTag(usNewRegKey.Buffer, SYS_TAG);
+		ZwClose(hKey);
+		index++;
+	} while (szListKeys[index] != NULL);
+
+	return;
+}
+
+BOOLEAN VmDetectorPatchScsiSymLink()
+{
+	BOOLEAN bResult = FALSE;
+	UNICODE_STRING usSymLink, usGlobal;
+	OBJECT_ATTRIBUTES oaSymLink, oaGlobal;
+	HANDLE DirectoryHandle = NULL, LinkHandle = NULL;
+	POBJECT_DIRECTORY ObjDir = NULL;
+	POBJECT_HEADER ObjHeader;
+	PWCHAR ObjName;
+	POBJECT_HEADER_NAME_INFO  NameInfo;
+	POBJECT_DIRECTORY_INFORMATION DirectoryInfo = NULL;
+	ULONG Skip, ResultLength;
+	NTSTATUS Status;
+	BOOLEAN First = TRUE;
+	ULONG ScsiType = SCSI_VMWARE;
+
+	DirectoryInfo = ExAllocatePoolWithTag(PagedPool, 1024 * sizeof(WCHAR), SYS_TAG);
+
+	if (DirectoryInfo == NULL)
+	{
+		return bResult;
+	}
+
+	RtlInitUnicodeString(&usGlobal, L"\\Global??");
+	InitializeObjectAttributes(&oaGlobal, &usGlobal, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+	do 
+	{
+		// VMware symbolic link
+		RtlInitUnicodeString(&usSymLink, SCSI_VM_SYMBOL_NAME);
+		InitializeObjectAttributes(&oaSymLink, &usSymLink, OBJ_CASE_INSENSITIVE, NULL, NULL);
+		Status = ZwOpenSymbolicLinkObject(&LinkHandle, SYMBOLIC_LINK_ALL_ACCESS, &oaSymLink);
+		if (NT_SUCCESS(Status))
+			ScsiType = SCSI_VMWARE;
+
+		// VBox symbolic link
+		if (!LinkHandle)
+		{
+			RtlInitUnicodeString(&usSymLink, IDE_VBOX_SYMBOL_NAME);
+			InitializeObjectAttributes(&oaSymLink, &usSymLink, OBJ_CASE_INSENSITIVE, NULL, NULL);
+			Status = ZwOpenSymbolicLinkObject(&LinkHandle, SYMBOLIC_LINK_ALL_ACCESS, &oaSymLink);
+			if (NT_SUCCESS(Status))
+				ScsiType = SCSI_VBOX;
+		}
+
+		if (!NT_SUCCESS(Status))
+		{
+			KdPrint(("[%s] Cannot find any VMware/VBox symbolic link, status=0x%lx\n", __FUNCTION__, Status));
+			break;
+		}
+
+		Status = ObReferenceObjectByHandle(LinkHandle, DIRECTORY_ALL_ACCESS, NULL, KernelMode, (PVOID *)&ObjDir, NULL);
+
+		if (!NT_SUCCESS(Status))
+		{
+			KdPrint(("[%s] Failed to get directory object, status=0x%lx\n", Status));
+			break;
+		}
+
+		// Get the object header from the object directory
+		ObjHeader = OBJECT_TO_OBJECT_HEADER(ObjDir);
+
+		// Get the object name which is located at OBJECT_HEADER - 0x10
+		NameInfo = OBJECT_HEADER_TO_NAME_INFO(ObjHeader);
+		ObjName = NameInfo->Name.Buffer;
+
+		// Check if the SCSI symbolic name contains VM string
+		WCHAR wObjName[MAX_PATH*sizeof(WCHAR)];
+		PWCHAR pszScsiSymbolName;
+
+		RtlSecureZeroMemory(wObjName, sizeof(wObjName));
+		RtlCopyMemory(wObjName, ObjName, NameInfo->Name.Length);
+		pszScsiSymbolName = _wcslwr(wObjName);
+		if (ScsiType == SCSI_VMWARE && wcsstr(_wcslwr(pszScsiSymbolName), L"vmware"))
+		{ 
+			*(ObjName + 11) = '3'; *(ObjName + 17) = '@';
+			*(ObjName + 30) = '@'; *(ObjName + 39) = '@';
+			*(ObjName + 48) = 'Z'; *(ObjName + 66) = 'F';
+			bResult = TRUE;
+		}
+		else if (ScsiType == SCSI_VBOX && wcsstr(_wcslwr(pszScsiSymbolName), L"vbox"))
+		{
+			*(ObjName + 10) = '0'; *(ObjName + 48) = 'X';
+			bResult = TRUE;
+		}
+
+		//Status = ZwOpenDirectoryObject(&DirectoryHandle, SYMBOLIC_LINK_ALL_ACCESS, &oaGlobal);
+
+		//if (!NT_SUCCESS(Status))
+		//{
+		//	KdPrint(("[%s] ZwOpenDirectoryObject failed, status=%lx\n", __FUNCTION__, Status));
+		//	break;
+		//}
+
+		//ULONG Count = 0;
+		//while (NT_SUCCESS(Status))
+		//{
+		//	Status = ZwQueryDirectoryObject(DirectoryHandle, DirectoryInfo, 1024 * sizeof(WCHAR), FALSE, First, &Skip, &ResultLength);
+		//	First = FALSE;
+
+		//	if (NT_SUCCESS(Status))
+		//	{
+		//		// TODO: Do something here
+		//		PWCHAR SymName;
+		//		DirectoryInfo[Count].Name.Buffer[DirectoryInfo[Count].Name.Length / sizeof(WCHAR)] = 0;
+		//		SymName = DirectoryInfo[Count].Name.Buffer;
+		//	}
+		//}
+
+	} while (FALSE);
+
+	if (ObjDir != NULL)
+		ObDereferenceObject(ObjDir);
+	if (DirectoryHandle != NULL)
+		ZwClose(DirectoryHandle);
+	if (LinkHandle != NULL)
+		ZwClose(LinkHandle);
+	if (DirectoryInfo != NULL)
+		ExFreePoolWithTag(DirectoryInfo, SYS_TAG);
+
+	return bResult;
+}
 BOOLEAN VmDetectorPatchStorageProperty()
 {
+	PCHAR				pVendorIdVbox;
 	PCHAR				pVendorId;
 	PDEVICE_OBJECT		pDevObj;
 	PFILE_OBJECT		DR0_FileObject;
@@ -388,6 +657,7 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	UNICODE_STRING		FltDrvName;
 	WCHAR				wFltDriverName[MAX_PATH*sizeof(WCHAR)] = {0};
 	WCHAR				*wDr0DevName=L"\\Device\\Harddisk0\\DR0";
+
 
 	// Get the lowest device object (ATAPI) from DR0 devstack
 	RtlInitUnicodeString(&DR0_DeviceName, wDr0DevName);
@@ -400,6 +670,7 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	pDevObj = IoGetDeviceAttachmentBaseRef(DR0_FileObject->DeviceObject);
 
 	pVendorId = (PCHAR)pDevObj->DeviceExtension;
+	pVendorIdVbox = pVendorId;
 
 	FltDrvName = pDevObj->DriverObject->DriverName;
 
@@ -415,9 +686,16 @@ BOOLEAN VmDetectorPatchStorageProperty()
 	//          from storport.sys (refer to storport_6.1.7601.17514.idb "RaGetUnitStorageDeviceProperty")
 	//			storport!DevObject->DeviceExtension+0x28->0x10
 	if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\atapi") == 0)
-		pVendorId = (PCHAR)pVendorId+0xD1;
+	{
+		pVendorId = (PCHAR)pVendorId + 0xD1;
+		// Otherwise it should be located at VBox offset
+		if (strlen(pVendorId) == 0)
+			pVendorId = (PCHAR)pVendorIdVbox + 0x2b5;
+	}
 	else if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\vmscsi") == 0)
-		pVendorId = (PCHAR)pVendorId+0x126;
+	{
+		pVendorId = (PCHAR)pVendorId + 0x126;
+	}
 	else if (wcscmp(_wcslwr(wFltDriverName), L"\\driver\\lsi_sas") == 0) // Windows 7 VM
 	{
 		PULONG pDevExtVendorData = NULL;
@@ -436,6 +714,16 @@ BOOLEAN VmDetectorPatchStorageProperty()
 		memcpy(pVendorId+31, "__________", 10);
 		memcpy(pVendorId+42, "12345678", 8);
 		memcpy(pVendorId+51, "01234567890123456789012345678901234678", 38);
+		ObDereferenceObject(pDevObj);
+		ObDereferenceObject(DR0_FileObject);
+		return TRUE;
+	}
+	else if (strcmp(pVendorId, "VBOX HARDDISK") == 0)
+	{
+		memcpy(pVendorId, "MYB0X DISKKKK", 13);
+		memcpy(pVendorId + 24, "X.0", 3);
+		memcpy(pVendorId + 803, "MYB0X DISKKKK", 13);
+		memcpy(pVendorId + 827, "X.0", 3);
 		ObDereferenceObject(pDevObj);
 		ObDereferenceObject(DR0_FileObject);
 		return TRUE;
@@ -472,30 +760,17 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	OBJECT_ATTRIBUTES	oaValueName;
 	UNICODE_STRING		usRegistryKey;
 	UNICODE_STRING		usValueName;
-	WCHAR		*wStrNewData = L"IDE\\DiskVMw@re_Virtu@l_ID3_H@rd_Driv3___________0123456789\\0123456789012345678901234567890123456789";
+	WCHAR		*wStrNewData = NULL;
 	NTSTATUS	status;
 	HANDLE		hKey;
 	ULONG		ulSize;
+	BOOLEAN		bResult = FALSE;
 
 	DbgPrint("Called VmDetectorPatchVmDiskReg\n");
 
-	//
-	// On Windows 7
-	// We don't want to tamper the ACL of the SCSI disk registry key and we decided to change the value from driver 
-	// because the registry key only has READ access
-	// This is to counter WMI_DiskDrive check which cannot be filtered by wmifilter.sys like on Windows XP
-	//
-	if (g_OsMajorVersion == 6 && g_OsMinorVersion == 1)
-	{
-		// TODO: SYSTEM\\CurrentControlSet\\Enum\\SCSI\\Disk&Ven_VMware_&Prod_VMware_Virtual_S\\5&1982005&0&000000
-		RtlInitUnicodeString(&usRegistryKey, L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Enum\\SCSI\\Disk&Ven_VMware_&Prod_VMware_Virtual_S");
-		RtlInitUnicodeString(&usValueName, L"0");
-	}
-	else if (g_OsMajorVersion == 5)
-	{
-		RtlInitUnicodeString(&usRegistryKey, L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\Disk\\Enum");
-		RtlInitUnicodeString(&usValueName, L"0");
-	}
+
+	RtlInitUnicodeString(&usRegistryKey, L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\Disk\\Enum");
+	RtlInitUnicodeString(&usValueName, L"0");
 
 
 	InitializeObjectAttributes(&oaRegistryKey, &usRegistryKey, OBJ_CASE_INSENSITIVE|OBJ_KERNEL_HANDLE, NULL, NULL );
@@ -506,7 +781,7 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	if (!NT_SUCCESS(status))
 	{
 		DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwOpenKey %#x\n", status);
-		return FALSE;
+		return bResult;
 	}
 
 	KdPrint(("[VmDetectorPatchVmDiskReg] Open key successfully!\n"));
@@ -521,10 +796,10 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 	if (status == STATUS_BUFFER_TOO_SMALL)
 	{
-		pvfi = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(NonPagedPool, ulSize, 'vmd');
+		pvfi = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(NonPagedPool, ulSize, SYS_TAG);
 
 		if (pvfi == NULL)
-			return FALSE;
+			return bResult;
 
 		status = ZwQueryValueKey(
 			hKey,
@@ -538,13 +813,14 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 	if (!NT_SUCCESS(status))
 	{	
 		DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwQueryValueKey %#x\n", status);
-		return FALSE;
+		return bResult;
 	}
 
 	KdPrint(("[VmDetectorPatchVmDiskReg] Query key successfully!\n"));
 
 	if (wcsstr(pvfi->Name, L"VMware"))
 	{
+		wStrNewData = L"IDE\\DiskVMw@re_Virtu@l_ID3_H@rd_Driv3___________0123456789\\0123456789012345678901234567890123456789";
 		status = ZwSetValueKey(
 			hKey,
 			&usValueName,
@@ -555,19 +831,38 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 		if (!NT_SUCCESS(status))
 		{	
-			DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwSetValueKey %#x\n", status);
+			DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwSetValueKey (VMWARE) %#x\n", status);
+			return bResult;
+		}
+
+		bResult = TRUE;
+		KdPrint(("[VmDetectorPatchVmDiskReg] ZwSetValueKey (VMWARE) successfully!\n"));
+	}
+	else if (wcsstr(pvfi->Name, L"VBOX"))
+	{
+		wStrNewData = L"IDE\\DiskMYBOX___________0123456789\\0123456789012345678901234567890123456789";
+		status = ZwSetValueKey(
+			hKey,
+			&usValueName,
+			0,
+			REG_SZ,
+			wStrNewData,
+			wcslen(wStrNewData) * 2 + 2);
+
+		if (!NT_SUCCESS(status))
+		{
+			DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwSetValueKey (VBOX) %#x\n", status);
 			return FALSE;
 		}
 
-		KdPrint(("[VmDetectorPatchVmDiskReg] ZwSetValueKey successfully!\n"));
-		ExFreePoolWithTag(pvfi, 'vmd');
-		ZwClose(hKey);
-		return TRUE;
+		bResult = TRUE;
+		KdPrint(("[VmDetectorPatchVmDiskReg] ZwSetValueKey (VBOX) successfully!\n"));
 	}
 
-	ExFreePoolWithTag(pvfi, 'vmd');
+
+	ExFreePoolWithTag(pvfi, SYS_TAG);
 	ZwClose(hKey);
-	return FALSE;
+	return bResult;
 }
 
 BOOLEAN VmDetectorPatchVmKernelModulesName(PDRIVER_OBJECT DriverObject)

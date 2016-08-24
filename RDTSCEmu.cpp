@@ -68,6 +68,11 @@ namespace { // anonymous namespace to limit the scope of this global variable!
 #define MAX_INSTR		(15)
 
 #define _MAX_PATH		1024
+
+// MSR index to Time-stamp counter (TSC)
+// Ref: https://github.com/ianw/vmware-workstation-7/blob/master/vmmon-only/include/x86msr.h
+#define MSR_TSC 0x10
+
 // valid for all exceptions with an associated error code (see Intel manuals Vol.3A, 5.13)
 typedef struct
 {
@@ -106,6 +111,31 @@ typedef struct
 
 UINT_PTR origHandlers[MAX_CPUS];
 
+FORCEINLINE 
+VOID __declspec(naked) SetRDTSCValue(ULONGLONG *RdtscHolder)
+{
+	__asm
+	{
+		push    ebp
+		mov     ebp, esp
+		push	eax
+		push	ecx
+		push	edx
+		mov     ecx, MSR_TSC
+		rdmsr
+		lea     ecx, RdtscHolder
+		mov     ecx, [ecx]
+		mov     dword ptr[ecx], eax
+		mov     dword ptr[ecx + 4], edx
+		pop     edx
+		pop     ecx
+		pop	    eax
+		mov     esp, ebp
+		pop	    ebp
+		retn
+	}
+}
+
 // returns length of instruction if it has been identified as RDTSC
 ULONG isRDTSC(PVOID address)
 {
@@ -128,6 +158,8 @@ ULONG isRDTSC(PVOID address)
 // performs the actual emulation
 // return false if original handler should be executed, true otherwise
 ULONG randomnum = 0;
+ULONGLONG g_currentReadRdtsc = 0;
+ULONGLONG g_previousReadRdtsc = 0;
 BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 {
 	
@@ -157,7 +189,7 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 							// Free ANSI string allocated by kernel
 							RtlFreeAnsiString(&asImageName);
 							// Free allocated pool memory by kernel
-							ExFreePoolWithTag(pImageName, 'vmde');
+							ExFreePoolWithTag(pImageName, SYS_TAG);
 							// We do not tamper the original value of EAX and EDX
 							stackLayout->origHandlerStack.eip += length;
 							return true;
@@ -178,24 +210,38 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 			DbgPrint("[hookImplementation] PID: %d (%wZ) called interrupt handler\n", PsGetCurrentProcessId(), pImageName);
 
 			// Free allocated pool memory by kernel
-			ExFreePoolWithTag(pImageName, 'vmde');
+			ExFreePoolWithTag(pImageName, SYS_TAG);
 			
 			// Other settings specified in vmdetector.ini will be processed here
 			if (g_RTDSCEmuMethodIncreasing)
 			{
 				static ULONG seed = 0x666;
-				ULONG edx = (ULONG)(g_RTDSCEmuRdtscvalue >> 32);
+				ULONGLONG ulRealRdtscDelta = 0;
 
 				// Get random number that is consistent through all subsequent RDTSC call
 				if (g_RTDSCEmuDelta && randomnum == 0) 
 					randomnum = RtlRandomEx(&seed) % g_RTDSCEmuDelta;
 
+				// TODO: To circumvent the situation when there is a Sleep call
+				//       we need to check the delta RDTSC value to see if it's greater
+				//       than 0x00000001`00000000
+				SetRDTSCValue(&g_currentReadRdtsc);
+				ulRealRdtscDelta = g_currentReadRdtsc - g_previousReadRdtsc;
+				KdPrint(("[%s] Current RDTSC: 0x%I64x, Previous RDTSC: 0x%I64x. Real RDTSC delta value : 0x%I64x\n", __FUNCTION__, g_currentReadRdtsc, g_previousReadRdtsc, ulRealRdtscDelta));
+				g_previousReadRdtsc = g_currentReadRdtsc;
+
 				// Get new lowest significant bytes of rdtsc value				
 				g_RTDSCEmuRdtscvalue = g_RTDSCEmuRdtscvalue + (ULONG)randomnum;
-				// Cast 32-bit int to 64-bit int
-				ULONGLONG ullrandomnum = randomnum;
-				// Get new highest significant bytes of rdtsc value	
-				g_RTDSCEmuRdtscvalue = g_RTDSCEmuRdtscvalue + (ullrandomnum << 32);
+
+				// There is probably Sleep call that caused a significant delta value
+				// Let's adjust highest significant bit of RDTSC as well
+				if ((ulRealRdtscDelta >> 32) >= 1)
+				{
+					// Cast 32-bit int to 64-bit int
+					ULONGLONG ullrandomnum = randomnum;
+					// Get new highest significant bytes of rdtsc value	
+					g_RTDSCEmuRdtscvalue = g_RTDSCEmuRdtscvalue + (ullrandomnum << 32);
+				}
 
 				KdPrint(("[%s] g_RTDSCEmuDelta: 0x%x, randomnum: 0x%x, new rdtsc: 0x%I64x\n", __FUNCTION__, g_RTDSCEmuDelta, randomnum, g_RTDSCEmuRdtscvalue));
 
@@ -292,6 +338,8 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 		{
 			g_RTDSCEmuRdtscvalue = ullRtdscValue;
 			g_RTDSCEmuDelta = ulRtdscValue;
+			if (g_previousReadRdtsc == 0)
+				g_previousReadRdtsc = g_RTDSCEmuRdtscvalue;
 		}
 		else
 			g_RTDSCEmuConstValue = ulRtdscValue;
@@ -354,26 +402,27 @@ PUNICODE_STRING GetProcessNameByPid(HANDLE pid)
 
 		ObDereferenceObject(pEproc);
 
-		if (status != STATUS_SUCCESS)
+		if (!NT_SUCCESS(status))
 			return NULL;
 
 		RtlZeroMemory(wImageNameBuffer, uImageMaxPath);
 
 		status = ZwQueryInformationProcess(hProcessHandle, ProcessImageFileName, &wImageNameBuffer, uImageMaxPath, &retlen);
 
-		if (status != STATUS_SUCCESS)
+		if (!NT_SUCCESS(status))
 			return NULL;
 
 		ZwClose(hProcessHandle);
 
-		pImagePath = (PUNICODE_STRING)ExAllocatePoolWithTag(NonPagedPool, retlen, 'vmde');
+		pImagePath = (PUNICODE_STRING)ExAllocatePoolWithTag(NonPagedPool, retlen, SYS_TAG);
 
 		if (pImagePath == NULL)
 			return NULL;
 
+		RtlSecureZeroMemory(pImagePath, retlen);
 		pImagePath->Length = *(USHORT*)wImageNameBuffer;
 		pImagePath->MaximumLength = *(USHORT*)wImageNameBuffer+2;
-
+		pImagePath->Buffer = (PWCHAR)((PUCHAR)pImagePath + 0x8);
 		RtlCopyUnicodeString(pImagePath, (UNICODE_STRING*)wImageNameBuffer);
 	}
 	__except(EXCEPTION_EXECUTE_HANDLER)

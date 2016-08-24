@@ -17,14 +17,18 @@
 #define WINXP
 #endif
 
+#define SYS_TAG 'vmde'
+#define SYSCALL_ZWRENAMEKEY_WIN7	0x122
 #define SYS_DEVICE_NAME L"\\Device\\iminnocent"
 #define SYS_SYMBOL_NAME L"\\??\\iminnocent"
-
+#define SCSI_VM_SYMBOL_NAME L"\\??\\scsi#disk&ven_vmware_&prod_vmware_virtual_s#5&1982005&0&000000#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}"
+#define IDE_VBOX_SYMBOL_NAME L"\\??\\ide#diskvbox_harddisk___________________________1.0_____#5&394c0ad3&0&0.0.0#{53f56307-b6bf-11d0-94f2-00a0c91efb8b}"
 #define IOCTL_VMDETECTORSYS_DEVMODEL_FIX CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_OUT_DIRECT , FILE_ANY_ACCESS)
 #define IOCTL_VMDETECTORSYS_VMDISKREG_FIX CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_OUT_DIRECT , FILE_ANY_ACCESS)
 #define IOCTL_VMDETECTORSYS_RTDSC_HOOK CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_OUT_DIRECT , FILE_ANY_ACCESS)
 #define IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION CTL_CODE(FILE_DEVICE_UNKNOWN, 0x805, METHOD_IN_DIRECT , FILE_ANY_ACCESS)
 #define IOCTL_VMDETECTORSYS_SEND_COUNT_FN CTL_CODE(FILE_DEVICE_UNKNOWN, 0x806, METHOD_IN_DIRECT , FILE_ANY_ACCESS)
+#define IOCTL_VMDETECTORSYS_SCSI_FIX CTL_CODE(FILE_DEVICE_UNKNOWN, 0x807, METHOD_OUT_DIRECT , FILE_ANY_ACCESS)
 
 //
 //  Ref: sfilter
@@ -61,8 +65,10 @@
 #include <ntddstor.h>
 #include <mountdev.h>
 #include <ntddvol.h>
+#include <Ntstrsafe.h>
 #include "RDTSCEmu.h"
 #include "VmDetectorUtils.h"
+#include "NtObStruc.h"
 
 BOOLEAN		g_bRtdscMethodIncreasing = FALSE;
 ULONGLONG	g_ullRdtscValue = 0;
@@ -82,6 +88,15 @@ extern int	g_countfilename = 0;
 
 extern ULONG g_OsMajorVersion;
 extern ULONG g_OsMinorVersion;
+
+//////////////////////////////////////////////////////////////////////////
+// Enumeration
+//////////////////////////////////////////////////////////////////////////
+typedef enum _SCSI_VM_TYPE
+{
+	SCSI_VMWARE = 1,
+	SCSI_VBOX = 2,
+}SCSI_VM_TYPE;
 
 //////////////////////////////////////////////////////////////////////////
 // Data structures
@@ -158,6 +173,17 @@ typedef struct _LDR_DATA_TABLE_ENTRY               // 18 elements, 0x50 bytes (s
 }LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
 #endif
 
+typedef struct _KSERVICE_TABLE_DESCRIPTOR {
+	unsigned long *ServiceTableBase;
+	unsigned long *ServiceCounterTableBase;
+	unsigned long NumberOfServices;
+	unsigned char *ParamTableBase;
+} ServiceDescriptorTableEntry, *pServiceDescriptorTableEntry;
+
+// Helper macros
+__declspec(dllimport) ServiceDescriptorTableEntry KeServiceDescriptorTable;
+#define SYSTEMSERVICE(_syscall) KeServiceDescriptorTable.ServiceTableBase[_syscall]
+
 //////////////////////////////////////////////////////////////////////////
 // Undocumented function prototype
 //////////////////////////////////////////////////////////////////////////
@@ -165,3 +191,21 @@ typedef struct _LDR_DATA_TABLE_ENTRY               // 18 elements, 0x50 bytes (s
 NTKERNELAPI
 	PDEVICE_OBJECT
 	IoGetDeviceAttachmentBaseRef(__in PDEVICE_OBJECT DeviceObject);
+
+typedef NTSTATUS(NTAPI *ZWQUERYDIRECTORYOBJECT)(
+	IN HANDLE DirectoryHandle,
+	OUT PVOID Buffer,
+	IN ULONG BufferLength,
+	IN BOOLEAN ReturnSingleEntry,
+	IN BOOLEAN RestartScan,
+	IN OUT PULONG Context,
+	OUT PULONG ReturnLength OPTIONAL);
+
+typedef NTSTATUS(NTAPI*ZWOPENDIRECTORYOBJECT)(
+	OUT PHANDLE DirectoryHandle,
+	IN ACCESS_MASK DesiredAccess,
+	IN POBJECT_ATTRIBUTES ObjectAttributes);
+
+typedef NTSTATUS(NTAPI*ZWRENAMEKEY)(
+	IN HANDLE KeyHandle,
+	IN PUNICODE_STRING NewName);
