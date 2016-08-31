@@ -74,8 +74,8 @@ BOOLEAN		g_bRtdscMethodIncreasing = FALSE;
 ULONGLONG	g_ullRdtscValue = 0;
 ULONG		g_ulRdtscValue = 0;
 PCHAR		*g_exclusionfilelist = NULL;
+int			g_countfilename = 0;
 extern PCHAR *g_tempexclusionfilelist = NULL;
-extern int	g_countfilename = 0;
 
 //
 //  Ref: sfilter

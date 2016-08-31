@@ -163,11 +163,11 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	// Get OS version first
 	GetOSVersion();
 
-	DbgPrint("[DriverEntry] Called DriverEntry. Platform=%d.%d\n", g_OsMajorVersion, g_OsMinorVersion);
+	DbgPrint("[%s] Called DriverEntry. Platform=%d.%d\n", __FUNCTION__, g_OsMajorVersion, g_OsMinorVersion);
 
 	if (!ResolveNativeAPIs())
 	{
-		DbgPrint("[%s] Failed in resolving neccessary native APIs\n", __FUNCTION__);
+		DbgPrint("[%s] Failed in resolving necessary native APIs\n", __FUNCTION__);
 		return status;
 	}
 
@@ -185,7 +185,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 
 	// Determine if the device object created successfully
 	if (!NT_SUCCESS(status)){
-		DbgPrint("[DriverEntry] Failed to create device object.\n");
+		DbgPrint("[%s] Failed to create device object.\n", __FUNCTION__);
 		return status;
 	}
 
@@ -208,7 +208,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 
 	// Determine if symbolic link created successfully
 	if (!NT_SUCCESS(status)){
-		DbgPrint("[DriverEntry] Failed to create symbolic link.\n");
+		DbgPrint("[%s] Failed to create symbolic link.\n", __FUNCTION__);
 		IoDeleteDevice(DeviceObject);
 		return status;
 	}
@@ -243,7 +243,7 @@ VOID VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject)
 	UNICODE_STRING usSymbolicName;
 	PDEVICE_EXTENSION DeviceExtension;
 
-	DbgPrint("[DriverUnload] Called DriverUnload\n");
+	DbgPrint("[%s] Called DriverUnload\n", __FUNCTION__);
 
 	DeviceExtension = DriverObject->DeviceObject->DeviceExtension;
 
@@ -407,7 +407,8 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 			KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SEND_COUNT_FN - g_countfilename count 0?\n"));
 		else
 		{
-			g_exclusionfilelist = (PCHAR*)ExAllocatePoolWithTag(NonPagedPool, sizeof(PCHAR)*g_countfilename, SYS_TAG);
+			g_exclusionfilelist = (PCHAR*)ExAllocatePoolWithTag(NonPagedPool, sizeof(PCHAR)*(g_countfilename+1), SYS_TAG);
+			RtlSecureZeroMemory(g_exclusionfilelist, sizeof(PCHAR)*(g_countfilename+1));
 			g_tempexclusionfilelist = g_exclusionfilelist;
 		}
 		info = dwInputBufferLength;
@@ -418,15 +419,17 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 
 		KdPrint(("[DBG] VmDetectorSysDispatchIOControl => IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION control code executed\n"));
 		pFileNameBuf = (PCHAR)Irp->AssociatedIrp.SystemBuffer;
-		DbgPrint("[IOCTL_VMDETECTORSYS_SEND_FN_EXCLUSION] Exclusion file name: %s\n", pFileNameBuf);
-		if (strlen(pFileNameBuf) >= (size_t)dwInputBufferLength)
+		DbgPrint("[%s] Exclusion file name: %s\n", __FUNCTION__, pFileNameBuf);
+		// The file length passed from the UM *MUST* include the null-terminating character
+		if (strlen(pFileNameBuf)+1 >= (size_t)dwInputBufferLength)
 		{	
-			PCHAR pBuf = (PCHAR)ExAllocatePoolWithTag(NonPagedPool, dwInputBufferLength+1, SYS_TAG); // Include terminating null character
-			RtlZeroMemory(pBuf, dwInputBufferLength+1);
+			PCHAR pBuf = (PCHAR)ExAllocatePoolWithTag(NonPagedPool, dwInputBufferLength, SYS_TAG);
+			RtlZeroMemory(pBuf, dwInputBufferLength);
 			RtlCopyMemory(pBuf, pFileNameBuf, dwInputBufferLength);
 			*g_exclusionfilelist = pBuf;
 			g_exclusionfilelist++;
 		}
+		*g_exclusionfilelist = NULL;
 		info = dwInputBufferLength;
 		break;
 
@@ -482,7 +485,6 @@ VOID VMDetectorRenameKey()
 			break;
 		}
 
-		DbgBreakPoint();
 		KdPrint(("[%s] Open \"%wZ\" successfully!\n", __FUNCTION__, &usRegistryKey));
 
 		// Initialize the new registry key name
@@ -780,11 +782,11 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 	if (!NT_SUCCESS(status))
 	{
-		DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwOpenKey %#x\n", status);
+		DbgPrint("[%s] Error ZwOpenKey %#x\n", __FUNCTION__, status);
 		return bResult;
 	}
 
-	KdPrint(("[VmDetectorPatchVmDiskReg] Open key successfully!\n"));
+	KdPrint(("[%s] Open key successfully!\n", __FUNCTION__));
 
 	status = ZwQueryValueKey(
 		hKey,
@@ -812,11 +814,11 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 	if (!NT_SUCCESS(status))
 	{	
-		DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwQueryValueKey %#x\n", status);
+		DbgPrint("[%s] Error ZwQueryValueKey %#x\n", __FUNCTION__, status);
 		return bResult;
 	}
 
-	KdPrint(("[VmDetectorPatchVmDiskReg] Query key successfully!\n"));
+	KdPrint(("[%s] Query key successfully!\n", __FUNCTION__));
 
 	if (wcsstr(pvfi->Name, L"VMware"))
 	{
@@ -831,12 +833,12 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 		if (!NT_SUCCESS(status))
 		{	
-			DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwSetValueKey (VMWARE) %#x\n", status);
+			DbgPrint("[%s] Error ZwSetValueKey (VMWARE) %#x\n", __FUNCTION__, status);
 			return bResult;
 		}
 
 		bResult = TRUE;
-		KdPrint(("[VmDetectorPatchVmDiskReg] ZwSetValueKey (VMWARE) successfully!\n"));
+		KdPrint(("[%s] ZwSetValueKey (VMWARE) successfully!\n", __FUNCTION__));
 	}
 	else if (wcsstr(pvfi->Name, L"VBOX"))
 	{
@@ -851,12 +853,12 @@ BOOLEAN VmDetectorPatchVmDiskReg()
 
 		if (!NT_SUCCESS(status))
 		{
-			DbgPrint("[VmDetectorPatchVmDiskReg] Error ZwSetValueKey (VBOX) %#x\n", status);
+			DbgPrint("[%s] Error ZwSetValueKey (VBOX) %#x\n", __FUNCTION__, status);
 			return FALSE;
 		}
 
 		bResult = TRUE;
-		KdPrint(("[VmDetectorPatchVmDiskReg] ZwSetValueKey (VBOX) successfully!\n"));
+		KdPrint(("[%s] ZwSetValueKey (VBOX) successfully!\n", __FUNCTION__));
 	}
 
 

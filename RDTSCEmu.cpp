@@ -25,6 +25,7 @@ extern "C" {
 }; // extern "C"
 #endif
 
+#include <stdlib.h>
 #include "VmDetectorSys.h"
 #include "RDTSCEmu.h"
 #include "distorm\distorm.h"
@@ -67,8 +68,6 @@ namespace { // anonymous namespace to limit the scope of this global variable!
 #define MAX_CPUS		(32)
 #define MAX_INSTR		(15)
 
-#define _MAX_PATH		1024
-
 // MSR index to Time-stamp counter (TSC)
 // Ref: https://github.com/ianw/vmware-workstation-7/blob/master/vmmon-only/include/x86msr.h
 #define MSR_TSC 0x10
@@ -110,6 +109,9 @@ typedef struct
 } STACK_WITHCTX, *PSTACK_WITHCTX;
 
 UINT_PTR origHandlers[MAX_CPUS];
+ERESOURCE g_ResourceEx;
+BOOLEAN g_bRdtscHookedInstalled = FALSE;
+INT g_NumberOfExclusionFile = 0;
 
 FORCEINLINE 
 VOID __declspec(naked) SetRDTSCValue(ULONGLONG *RdtscHolder)
@@ -139,11 +141,12 @@ VOID __declspec(naked) SetRDTSCValue(ULONGLONG *RdtscHolder)
 // returns length of instruction if it has been identified as RDTSC
 ULONG isRDTSC(PVOID address)
 {
+	int RDTSCInstLen = 2;
 	__try
 	{
 		_DecodedInst instructions[MAX_INSTR];
 		unsigned int instructionCount;
-		_DecodeResult res = distorm_decode(0, (const unsigned char*)address, MAX_INSTR, Decode32Bits, instructions, MAX_INSTR, &instructionCount);
+		_DecodeResult res = distorm_decode(0, (const unsigned char*)address, RDTSCInstLen, Decode32Bits, instructions, MAX_INSTR, &instructionCount);
 		if (res)
 		{
 			return strcmp((const char*)instructions->mnemonic.p, "RDTSC") ? 0 : instructions->size;
@@ -155,6 +158,22 @@ ULONG isRDTSC(PVOID address)
 	return 0;
 }
 
+VOID enterCriticalRegion(KIRQL OldIrql)
+{
+	if (OldIrql >= DISPATCH_LEVEL)
+		KeLowerIrql(APC_LEVEL);
+	KeEnterCriticalRegion();
+	ExAcquireResourceExclusiveLite(&g_ResourceEx, TRUE);
+}
+
+VOID leaveCriticalRegion(KIRQL OldIrql)
+{
+	if (KeGetCurrentIrql() == APC_LEVEL)
+		KeRaiseIrql(OldIrql, &OldIrql);
+	ExReleaseResourceLite(&g_ResourceEx);
+	KeLeaveCriticalRegion();
+}
+
 // performs the actual emulation
 // return false if original handler should be executed, true otherwise
 ULONG randomnum = 0;
@@ -162,36 +181,52 @@ ULONGLONG g_currentReadRdtsc = 0;
 ULONGLONG g_previousReadRdtsc = 0;
 BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 {
-	
-	PUNICODE_STRING pImageName = GetProcessNameByPid(PsGetCurrentProcessId());
-	ANSI_STRING asImageName; 
 	int index;
+	CHAR ImageName[_MAX_PATH];
 
-	// Always initialize g_tempexclusionfilelist. When there is another thread executing this function,
-	// the previous thread hasn't finished executing yet.
-	// This caused g_tempexclusionfilelist always in an invalid pointer location
-	g_tempexclusionfilelist = g_pExclusionList;
-
+	KIRQL OldIrql = KeGetCurrentIrql();
+	enterCriticalRegion(OldIrql);
 	if (MmIsAddressValid((PVOID)stackLayout->origHandlerStack.eip))
 	{
 		if (ULONG length = isRDTSC((PVOID)stackLayout->origHandlerStack.eip))
 		{
-			// Process the exclusion first
-			if (g_countfilename > 0)
+			PUNICODE_STRING pImageName = GetProcessNameByPid(PsGetCurrentProcessId());
+			//ANSI_STRING asImageName;
+
+			// Return true to tell it is RDTSC instruction
+			if (pImageName == NULL)
 			{
-				RtlUnicodeStringToAnsiString(&asImageName, pImageName, TRUE);
-				for (index=0; index < g_countfilename;  index++)
+				leaveCriticalRegion(OldIrql);
+				return true;
+			}
+
+			// Process the exclusion first
+			if (g_NumberOfExclusionFile > 0)
+			{
+				// Always initialize g_tempexclusionfilelist. When there is another thread executing this function,
+				// the previous thread hasn't finished executing yet.
+				// This caused g_tempexclusionfilelist always in an invalid pointer location
+				// Get exclusive access to shared exclusion list
+				g_tempexclusionfilelist = g_pExclusionList;
+				RtlSecureZeroMemory(ImageName, _MAX_PATH);
+				wcstombs(ImageName, pImageName->Buffer, _MAX_PATH);
+				for (index=0; index < g_NumberOfExclusionFile;  index++)
 				{
 					__try{
-						if (strstr(_strlwr(asImageName.Buffer), _strlwr(*g_tempexclusionfilelist)) != NULL)
+						if (*g_tempexclusionfilelist == NULL || !MmIsAddressValid(*g_tempexclusionfilelist))
+						{
+							KdPrint(("[DBG] Exclusion list is empty.\n"));
+							break;
+						}
+						else if (strstr(_strlwr(ImageName), _strlwr(*g_tempexclusionfilelist)) != NULL)
 						{
 							KdPrint(("[DBG] Excluded %wZ\n", pImageName));
-							// Free ANSI string allocated by kernel
-							RtlFreeAnsiString(&asImageName);
 							// Free allocated pool memory by kernel
 							ExFreePoolWithTag(pImageName, SYS_TAG);
+							pImageName = NULL;
 							// We do not tamper the original value of EAX and EDX
 							stackLayout->origHandlerStack.eip += length;
+							leaveCriticalRegion(OldIrql);
 							return true;
 						}
 						g_tempexclusionfilelist++;
@@ -199,18 +234,15 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 					__except(EXCEPTION_EXECUTE_HANDLER){
 						KdPrint(("[DBG] Exclusion file list address: 0x%08x\n", g_pExclusionList));
 						KdPrint(("[DBG] Current pointer to file list address: 0x%08x\n", g_tempexclusionfilelist));
-						KdPrint(("[DBG] asImageName.Buffer address: 0x%08x\n", asImageName.Buffer));
 						break;
 					}
 				}
-				// Free ANSI string allocated by kernel
-				RtlFreeAnsiString(&asImageName);
 			}
-
-			DbgPrint("[hookImplementation] PID: %d (%wZ) called interrupt handler\n", PsGetCurrentProcessId(), pImageName);
+			DbgPrint("[%s] PID: %d (%wZ) called interrupt handler\n", __FUNCTION__, PsGetCurrentProcessId(), pImageName);
 
 			// Free allocated pool memory by kernel
-			ExFreePoolWithTag(pImageName, SYS_TAG);
+			if (pImageName != NULL)
+				ExFreePoolWithTag(pImageName, SYS_TAG);
 			
 			// Other settings specified in vmdetector.ini will be processed here
 			if (g_RTDSCEmuMethodIncreasing)
@@ -222,9 +254,9 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 				if (g_RTDSCEmuDelta && randomnum == 0) 
 					randomnum = RtlRandomEx(&seed) % g_RTDSCEmuDelta;
 
-				// TODO: To circumvent the situation when there is a Sleep call
-				//       we need to check the delta RDTSC value to see if it's greater
-				//       than 0x00000001`00000000
+				// To circumvent the situation when there is a Sleep call
+				// we need to check the delta RDTSC value to see if it's greater
+				// than 0x00000001`00000000
 				SetRDTSCValue(&g_currentReadRdtsc);
 				ulRealRdtscDelta = g_currentReadRdtsc - g_previousReadRdtsc;
 				KdPrint(("[%s] Current RDTSC: 0x%I64x, Previous RDTSC: 0x%I64x. Real RDTSC delta value : 0x%I64x\n", __FUNCTION__, g_currentReadRdtsc, g_previousReadRdtsc, ulRealRdtscDelta));
@@ -255,11 +287,11 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 			// #GP is a fault, so the CPU would restart the faulting instruction
 			// since we "handled" this exception, we need to skip it
 			stackLayout->origHandlerStack.eip += length;
-
+			leaveCriticalRegion(OldIrql);
 			return true;
 		}
 	}
-	
+	leaveCriticalRegion(OldIrql);
 	return false;
 }
 
@@ -315,7 +347,8 @@ extern "C" {
 #endif
 BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOOLEAN bRtdscMethodIncreasing, PCHAR *pExclusionList, int CountExclusionFilename)
 {
-	
+
+	KdPrint(("[%s] Entered\n", __FUNCTION__));
 	if (ZwQueryInformationProcess == NULL)
 	{
 		UNICODE_STRING routineName; 
@@ -324,7 +357,7 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 		ZwQueryInformationProcess = (ZWQUERYINFORMATIONPROCESS) MmGetSystemRoutineAddress(&routineName); 
 		if (ZwQueryInformationProcess == NULL) 
 		{	
-			DbgPrint("[RDTSEMU_initializeHooks] Failed to get ZwQueryInformationProcess function address\n");
+			DbgPrint("[%s] Failed to get ZwQueryInformationProcess function address\n", __FUNCTION__);
 			return false; 
 		}
 	}
@@ -349,20 +382,25 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 		{
 			g_tempexclusionfilelist = pExclusionList;
 			g_pExclusionList = pExclusionList;
-			g_countfilename = CountExclusionFilename;
+			g_NumberOfExclusionFile = CountExclusionFilename;
 			g_exclusionparamset = true;
 		}
 		// Ref: http://newgre.net/node/65
-		// Enable "timestamp dsiable" flag at CR4 ->
+		// Enable "timestamp disable" flag at CR4 ->
 		// Call RDTSC from UM -> raised #GP (general protection fault) exception ->
 		// IDT handler@#13 will be triggered ->
 		// Call our replaced IDT handler -> *END*
 		// load CR4 register into EAX, set TSD flag and update CR4 from EAX
-		for (CCHAR i=0; i<KeNumberProcessors; ++i)
+		if (!g_bRdtscHookedInstalled)
 		{
-			switchToCPU(i);
-			hookInterrupt(hookStub, 0xD, &origHandlers[i]);
-			ENABLE_TSD;
+			for (CCHAR i = 0; i < KeNumberProcessors; ++i)
+			{
+				switchToCPU(i);
+				hookInterrupt(hookStub, 0xD, &origHandlers[i]);
+				ENABLE_TSD;
+			}
+			ExInitializeResourceLite(&g_ResourceEx);
+			g_bRdtscHookedInstalled = TRUE;
 		}
 		return true;
 	}
@@ -372,11 +410,15 @@ BOOLEAN RDTSEMU_initializeHooks(ULONGLONG ullRtdscValue, ULONG ulRtdscValue, BOO
 
 VOID RDTSEMU_removeHooks()
 {
-	for (CCHAR i=0; i<KeNumberProcessors; ++i)
+	if (g_bRdtscHookedInstalled)
 	{
-		switchToCPU(i);
-		CLEAR_TSD;
-		hookInterrupt((PVOID)origHandlers[i], 0xD, NULL);
+		for (CCHAR i = 0; i < KeNumberProcessors; ++i)
+		{
+			switchToCPU(i);
+			CLEAR_TSD;
+			hookInterrupt((PVOID)origHandlers[i], 0xD, NULL);
+		}
+		ExDeleteResourceLite(&g_ResourceEx);
 	}
 }
 
