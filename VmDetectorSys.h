@@ -60,14 +60,16 @@
 	(g_OsMajorVersion > 6))
 
 
-#include <ntddk.h>
+//#include <ntddk.h>
 #include <ntdef.h>
+#include <ntifs.h>
 #include <ntddstor.h>
 #include <mountdev.h>
 #include <ntddvol.h>
 #include <Ntstrsafe.h>
 #include "RDTSCEmu.h"
 #include "VmDetectorUtils.h"
+#include "VmDetectorregFlt.h"
 #include "NtObStruc.h"
 
 BOOLEAN		g_bRtdscMethodIncreasing = FALSE;
@@ -90,6 +92,12 @@ extern ULONG g_OsMajorVersion;
 extern ULONG g_OsMinorVersion;
 
 //////////////////////////////////////////////////////////////////////////
+// Helpful macros
+//////////////////////////////////////////////////////////////////////////
+#define LODWORD(l) ((DWORD)((DWORDLONG)(l)))
+#define HIDWORD(l) ((DWORD)(((DWORDLONG)(l)>>32)&0xFFFFFFF
+
+//////////////////////////////////////////////////////////////////////////
 // Enumeration
 //////////////////////////////////////////////////////////////////////////
 typedef enum _SCSI_VM_TYPE
@@ -101,6 +109,18 @@ typedef enum _SCSI_VM_TYPE
 //////////////////////////////////////////////////////////////////////////
 // Data structures
 //////////////////////////////////////////////////////////////////////////
+
+// Device extension specific to the driver
+typedef struct _deviceExtension
+{
+    PDEVICE_OBJECT DeviceObject;
+    PDEVICE_OBJECT TargetDeviceObject;
+    PDEVICE_OBJECT PhysicalDeviceObject;
+    UNICODE_STRING usDeviceName;
+    UNICODE_STRING usSymlinkName;
+    PREGFLT_CALLBACK_CONTEXT pRegFltCallbackCtx;
+} DEVICE_EXTENSION, *PDEVICE_EXTENSION;
+
 #if defined(WIN7)
 typedef struct _LDR_DATA_TABLE_ENTRY							// 24 elements, 0xE0 bytes (sizeof)
 {

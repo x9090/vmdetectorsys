@@ -36,18 +36,7 @@ NTSTATUS VmDetectorSysPnP(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp);
 
 // Undocumented native APIs
 ZWQUERYDIRECTORYOBJECT ZwQueryDirectoryObject = NULL;
-ZWOPENDIRECTORYOBJECT ZwOpenDirectoryObject = NULL;
 ZWRENAMEKEY _ZwRenameKey = NULL;
-
-// Device extension specific to the driver
-typedef struct _deviceExtension
-{
-	PDEVICE_OBJECT DeviceObject;
-	PDEVICE_OBJECT TargetDeviceObject;
-	PDEVICE_OBJECT PhysicalDeviceObject;
-	UNICODE_STRING usDeviceName;
-	UNICODE_STRING usSymlinkName;
-} DEVICE_EXTENSION, *PDEVICE_EXTENSION;
 
 // {3e58af2a-ce92-42f1-a508-7290a9408b66}
 static const GUID GUID_VmDetectorSysInterface = {0x3E58AF2A, 0xce92, 0x42f1, {0xa5, 0x8, 0x72, 0x90, 0xa9, 0x40, 0x8b, 0x66 } };
@@ -68,17 +57,6 @@ BOOLEAN ResolveNativeAPIs()
 		ZwQueryDirectoryObject = (ZWQUERYDIRECTORYOBJECT)MmGetSystemRoutineAddress(&routineName);
 
 		if (ZwQueryDirectoryObject == NULL)
-			return FALSE;
-	}
-
-	if (ZwOpenDirectoryObject == NULL)
-	{
-		UNICODE_STRING routineName;
-
-		RtlInitUnicodeString(&routineName, L"ZwOpenDirectoryObject");
-		ZwOpenDirectoryObject = (ZWOPENDIRECTORYOBJECT)MmGetSystemRoutineAddress(&routineName);
-
-		if (ZwOpenDirectoryObject == NULL)
 			return FALSE;
 	}
 
@@ -235,6 +213,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT DriverObject, IN PUNICODE_STRING  Registr
 	// TODO: it might be more elegant to implement CmRegistryCallback
 	VMDetectorRenameKey();
 
+    RegisterRegFltCallback(DriverObject->DeviceObject);
 	return STATUS_SUCCESS;
 }
 
@@ -248,6 +227,9 @@ VOID VmDetectorSysUnload(IN PDRIVER_OBJECT DriverObject)
 	DeviceExtension = DriverObject->DeviceObject->DeviceExtension;
 
 	usSymbolicName = DeviceExtension->usSymlinkName;
+
+    // Unregister our registry filter routines
+    UnRegisterFltCallback(DriverObject->DeviceObject);
 
 	// Delete the symbolic name
 	IoDeleteSymbolicLink(&usSymbolicName);
@@ -455,9 +437,11 @@ NTSTATUS VmDetectorSysDispatchIOControl(IN PDEVICE_OBJECT DeviceObject, IN PIRP 
 *			 * HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\PCI\VEN_80EE&DEV_CAFE&SUBSYS_00000000&REV_00\3&267a616a&0&20
 *			 * HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\PCI\VEN_80EE&DEV_BEEF&SUBSYS_00000000&REV_00\3&267a616a&0&10
 */
+#define MAX_DUMMY_COUNTER 50
 VOID VMDetectorRenameKey()
 {
 	INT index = 0;
+    INT DummyCnt = 0;
 	WCHAR *szListKeys[] = {
 		L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_80EE&DEV_CAFE&SUBSYS_00000000&REV_00",
 		L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_80EE&DEV_BEEF&SUBSYS_00000000&REV_00",
@@ -481,7 +465,7 @@ VOID VMDetectorRenameKey()
 
 		if (!NT_SUCCESS(status))
 		{
-			KdPrint(("[%s] Failed ZwOpenKey %wZ, %#x\n", __FUNCTION__, &usRegistryKey, status));
+			KdPrint(("[%s] Failed ZwOpenKey %wZ, 0x%08x\n", __FUNCTION__, &usRegistryKey, status));
 			break;
 		}
 
@@ -500,28 +484,37 @@ VOID VMDetectorRenameKey()
 		switch (index)
 		{
 		case 0:
-			RtlStringCchCopyW(usNewRegKey.Buffer, KeyLength + 1, L"VEN_80EE&DEV_C@FE&SUBSYS_00000000&REV_00");
+            RtlStringCbPrintfW(usNewRegKey.Buffer, usNewRegKey.Length, L"%ws_%d", L"VEN_80EE&DEV_C@FE&SUBSYS_00000000&REV_00", DummyCnt);
 			break;
 		case 1:
-			RtlStringCchCopyW(usNewRegKey.Buffer, KeyLength + 1, L"VEN_80EE&DEV_B33F&SUBSYS_00000000&REV_00");
+            RtlStringCbPrintfW(usNewRegKey.Buffer, usNewRegKey.Length, L"%ws_%d", L"VEN_80EE&DEV_B33F&SUBSYS_00000000&REV_00", DummyCnt);
 			break;
 		default:
 			break;
 		}
 		
 		// Rename registry key
-		if (!NT_SUCCESS((status = _ZwRenameKey(hKey, &usNewRegKey))))
-			KdPrint(("[%s] Failed ZwRenameKey \"%wZ\", %#x\n", __FUNCTION__, &usNewRegKey, status));
+        if (!NT_SUCCESS((status = _ZwRenameKey(hKey, &usNewRegKey))))
+        {
+            KdPrint(("[%s] Failed ZwRenameKey \"%wZ\"\n", __FUNCTION__, &usNewRegKey));
+            KdPrint(("Status: 0x%08x\n", status));
+        }
 		else
 		{
 			KdPrint(("[%s] Renamed key \"%wZ\"!\n", __FUNCTION__, &usNewRegKey));
 			ZwFlushKey(hKey);
 		}
 
+        // Probably a renamed key, generate new a unique key
+        if (status == STATUS_CANNOT_DELETE)
+            DummyCnt++;
+        // As long as it is not renamed failed, we assumed success
+        else
+            index++;
+            
 		ExFreePoolWithTag(usNewRegKey.Buffer, SYS_TAG);
 		ZwClose(hKey);
-		index++;
-	} while (szListKeys[index] != NULL);
+    } while (szListKeys[index] != NULL && DummyCnt < MAX_DUMMY_COUNTER);
 
 	return;
 }

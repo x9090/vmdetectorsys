@@ -194,6 +194,7 @@
     <ClCompile Include="distorm\src\x86defs.c" />
     <ClCompile Include="HookInt.cpp" />
     <ClCompile Include="RDTSCEmu.cpp" />
+    <ClCompile Include="VmdetectorRegFlt.c" />
     <ClCompile Include="VmDetectorSys.c" />
     <ClCompile Include="VmDetectorUtils.cpp" />
     <ResourceCompile Include="@(RcSourceFiles)" Exclude="@(ResourceCompile)" />
@@ -232,7 +233,6 @@
     <ClInclude Include="distorm\src\textdefs.h" />
     <ClInclude Include="distorm\src\wstring.h" />
     <ClInclude Include="distorm\src\x86defs.h" />
-    <!-- <ClInclude Include="VmDetectorUtils.h" /> -->
   </ItemGroup>
   <!-- /Necessary to pick up propper files from local directory when in the IDE-->
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -8,3 +8,16 @@
 typedef NTSTATUS(*RTLGETVERSION) (
 	IN OUT PRTL_OSVERSIONINFOW VersionInformation
 	);
+
+
+//////////////////////////////////////////////////////////////////////////
+// Prototypes
+//////////////////////////////////////////////////////////////////////////
+#if defined(__cplusplus)
+extern "C"
+{
+#endif
+PWCHAR wcsistr(PWCHAR wcs1, PWCHAR wcs2);
+#if defined(__cplusplus)
+}
+#endif

@@ -78,3 +78,40 @@ Return Value:
 
 	return;     
 }
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//	Description :
+//		wcsstr case-insensitive version (scans "haystack" for "needle").
+//	Parameters :
+//		_in_ PWCHAR *haystack :	PWCHAR string to be scanned.
+//		_in_ PWCHAR *needle :	PWCHAR string to find.
+//	Return value :
+//		PWCHAR : NULL if not found, otherwise "needle" first occurence pointer in "haystack".
+//	Notes : http://www.codeproject.com/Articles/383185/SSE-accelerated-case-insensitive-substring-search
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+PWCHAR wcsistr(PWCHAR wcs1, PWCHAR wcs2)
+{
+    const wchar_t *s1, *s2;
+    const wchar_t l = towlower(*wcs2);
+    const wchar_t u = towupper(*wcs2);
+
+    if (!*wcs2)
+        return wcs1;
+
+    for (; *wcs1; ++wcs1)
+    {
+        if (*wcs1 == l || *wcs1 == u)
+        {
+            s1 = wcs1 + 1;
+            s2 = wcs2 + 1;
+
+            while (*s1 && *s2 && towlower(*s1) == towlower(*s2))
+                ++s1, ++s2;
+
+            if (!*s2)
+                return wcs1;
+        }
+    }
+
+    return NULL;
+}

@@ -177,6 +177,7 @@ VOID leaveCriticalRegion(KIRQL OldIrql)
 // performs the actual emulation
 // return false if original handler should be executed, true otherwise
 ULONG randomnum = 0;
+ULONG g_previousrandomnum = 0;
 ULONGLONG g_currentReadRdtsc = 0;
 ULONGLONG g_previousReadRdtsc = 0;
 BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
@@ -247,12 +248,21 @@ BOOLEAN __stdcall hookImplementation(PSTACK_WITHCTX stackLayout)
 			// Other settings specified in vmdetector.ini will be processed here
 			if (g_RTDSCEmuMethodIncreasing)
 			{
-				static ULONG seed = 0x666;
+                static ULONG seed = LODWORD(g_currentReadRdtsc == 0 ? 0x666 : g_currentReadRdtsc);
 				ULONGLONG ulRealRdtscDelta = 0;
 
+                /* We couldn't afford to use fixed random number as we need to build a more realistic TSC value
+                *  Check CheckRDTSCHookUsingHeuristic & PassRDTSCUsingAPIHeuristic
+                */
 				// Get random number that is consistent through all subsequent RDTSC call
-				if (g_RTDSCEmuDelta && randomnum == 0) 
-					randomnum = RtlRandomEx(&seed) % g_RTDSCEmuDelta;
+				//if (g_RTDSCEmuDelta && randomnum == 0) 
+				randomnum = RtlRandomEx(&seed) % g_RTDSCEmuDelta;
+
+                // We use the previous random number + incremental value defined in the config file
+                if (randomnum == 0)
+                    randomnum = g_previousrandomnum + g_RTDSCEmuDelta;
+
+                g_previousrandomnum = randomnum;
 
 				// To circumvent the situation when there is a Sleep call
 				// we need to check the delta RDTSC value to see if it's greater
